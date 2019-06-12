@@ -208,7 +208,7 @@
     </param>
     <param>
       <key>labels</key>
-      <value>[i for i in range(0, 40)]</value>
+      <value>[str(i) for i in range(0, 40)]</value>
     </param>
     <param>
       <key>num_opts</key>
