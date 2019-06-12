@@ -21,7 +21,7 @@ gr_block_install() {
   orig="$(pwd)"
   cd "$1"
   mkdir -p build
-  cd build && cmake -DPythonLibs_FIND_VERSION:STRING="2.7" -DPythonInterp_FIND_VERSION:STRING="2.7" .. && make && sudo make install
+  cd build && cmake -DPythonLibs_FIND_VERSION:STRING="2.7" -DPythonInterp_FIND_VERSION:STRING="2.7" -DCMAKE_PREFIX_PATH=$PYBOMBS_PREFIX/lib/cmake/gnuradio .. && make && sudo make install
   cd "$orig"
 }
 
