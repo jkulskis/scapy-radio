@@ -4,17 +4,7 @@
 # Authors: Jean-Michel Picod, Arnaud Lebrun, Jonathan Christofer Demay
 
 scapy_install() {
-  cd scapy && sudo python2 setup.py install && cd ..
-}
-
-grc_install() {
-  mkdir -p "${HOME}/.scapy/radio/"
-
-  for i in gnuradio/grc/*.grc; do
-    mkdir -p "${HOME}/.scapy/radio/$(basename ${i} .grc)"
-    cp "${i}" "${HOME}/.scapy/radio/"
-    grcc --directory="${HOME}/.scapy/radio/$(basename ${i} .grc)" "${i}"
-  done
+  python3 setup.py install
 }
 
 gr_block_install() {
@@ -27,7 +17,7 @@ gr_block_install() {
 
 blocks_install() {
   for d in gnuradio/*; do
-    [ "$d" = "gnuradio/grc" ] && continue
+    [ "$d" = "/scapy-radio/gnuradio/grc" ] && continue
     gr_block_install "$d"
   done
 }
@@ -35,15 +25,11 @@ blocks_install() {
 if [ $# -eq 0 ]; then
   scapy_install
   blocks_install
-  grc_install
 else
   while [ $# -ne 0 ]; do
     case $1 in
       scapy)
 	scapy_install
-	;;
-      grc)
-	grc_install
 	;;
       blocks)
 	blocks_install
