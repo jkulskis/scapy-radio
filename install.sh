@@ -4,7 +4,7 @@
 # Authors: Jean-Michel Picod, Arnaud Lebrun, Jonathan Christofer Demay
 
 scapy_install() {
-  python3 setup.py install
+  sudo python3 scapy-radio/scapy/setup.py install
 }
 
 gr_block_install() {
