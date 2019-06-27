@@ -9,15 +9,16 @@ scapy_install() {
 
 gr_block_install() {
   orig="$(pwd)"
+  pybombs_prefix=/pybombs
   cd "$1"
   mkdir -p build
-  cd build && cmake -DPythonLibs_FIND_VERSION:STRING="2.7" -DPythonInterp_FIND_VERSION:STRING="2.7" -DCMAKE_PREFIX_PATH=/pybombs/lib/cmake/gnuradio .. && make && sudo make install
+  cd build && cmake -DPythonLibs_FIND_VERSION:STRING="2.7" -DPythonInterp_FIND_VERSION:STRING="2.7" -DCMAKE_PREFIX_PATH="$pybombs_prefix/lib/cmake/gnuradio" .. && make && make install
   cd "$orig"
 }
 
 blocks_install() {
-  for d in /scapy-radio/gnuradio/*; do
-    [ "$d" = "/scapy-radio/gnuradio/grc" ] && continue
+  for d in gnuradio/*; do
+    [ "$d" = "gnuradio/grc" ] && continue
     gr_block_install "$d"
   done
 }
