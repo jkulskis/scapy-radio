@@ -81,7 +81,7 @@ def sniffradio(radio=None, ch=None, env=None, opened_socket=None, *args, **kargs
     rv = sendrecv.sniff(opened_socket=s, *args, **kargs)
     if opened_socket is None:
         s.close()
-        #print("Open socket is none")
+    conf.gr_process.kill()
     return rv
 
 
