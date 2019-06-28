@@ -7,6 +7,16 @@ scapy_install() {
   cd scapy && python3 setup.py install && cd ..
 }
 
+grc_install() {
+  mkdir -p "${HOME}/.scapy/radio/"
+
+  for i in gnuradio/grc/*.grc; do
+    mkdir -p "${HOME}/.scapy/radio/$(basename ${i} .grc)"
+    cp "${i}" "${HOME}/.scapy/radio/"
+    grcc --directory="${HOME}/.scapy/radio/$(basename ${i} .grc)" "${i}"
+  done
+}
+
 gr_block_install() {
   orig="$(pwd)"
   pybombs_prefix=/pybombs
@@ -31,6 +41,9 @@ else
     case $1 in
       scapy)
 	scapy_install
+	;;
+      grc)
+	grc_install
 	;;
       blocks)
 	blocks_install
