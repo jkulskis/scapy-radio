@@ -3,6 +3,8 @@
 # Copyright (C) Airbus DS CyberSecurity, 2014
 # Authors: Jean-Michel Picod, Arnaud Lebrun, Jonathan Christofer Demay
 
+pybombs_prefix=/pybombs
+
 scapy_install() {
   cd scapy && python3 setup.py install && cd ..
 }
@@ -19,10 +21,9 @@ grc_install() {
 
 gr_block_install() {
   orig="$(pwd)"
-  pybombs_prefix=/pybombs
   cd "$1"
   mkdir -p build
-  cd build && cmake -DPythonLibs_FIND_VERSION:STRING="2.7" -DPythonInterp_FIND_VERSION:STRING="2.7" -DCMAKE_PREFIX_PATH="$pybombs_prefix/lib/cmake/gnuradio" .. && make && make install
+  cd build && cmake -DCMAKE_PREFIX_PATH="$pybombs_prefix" .. && make && make install
   cd "$orig"
 }
 
@@ -37,7 +38,6 @@ if [ $# -eq 0 ]; then
   scapy_install
   blocks_install
 else
-  while [ $# -ne 0 ]; do
     case $1 in
       scapy)
 	scapy_install
@@ -46,11 +46,13 @@ else
 	grc_install
 	;;
       blocks)
+	if [ $# -eq 2 ]
+  	  then
+    	    pybombs_prefix="$2"
+	fi
 	blocks_install
 	;;
       *)
 	echo "Invalid option: $1"
     esac
-    shift
-  done
 fi
