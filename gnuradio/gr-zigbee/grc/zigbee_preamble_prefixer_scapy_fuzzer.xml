@@ -1,0 +1,59 @@
+<?xml version="1.0"?>
+<block>
+  <name>preamble_prefixer_scapy_fuzzer</name>
+  <key>zigbee_preamble_prefixer_scapy_fuzzer</key>
+  <category>[zigbee]</category>
+  <import>import zigbee</import>
+  <make>zigbee.preamble_prefixer_scapy_fuzzer($octet1, $octet2, $octet3, $octet4, $octet5)</make>
+  <!-- Make one 'param' node for every Parameter you want settable from the GUI.
+       Sub-nodes:
+       * name
+       * key (makes the value accessible as $keyname, e.g. in the make node)
+       * type -->
+  <param>
+    <name>octet1</name>
+    <key>octet1</key>
+    <type>int</type>
+  </param>
+  <param>
+    <name>octet2</name>
+    <key>octet2</key>
+    <type>int</type>
+  </param>
+  <param>
+    <name>octet3</name>
+    <key>octet3</key>
+    <type>int</type>
+  </param>
+  <param>
+    <name>octet4</name>
+    <key>octet4</key>
+    <type>int</type>
+  </param>
+  <param>
+    <name>octet5</name>
+    <key>octet5</key>
+    <type>int</type>
+  </param>
+
+
+  <!-- Make one 'sink' node per input. Sub-nodes:
+       * name (an identifier for the GUI)
+       * type
+       * vlen
+       * optional (set to 1 for optional inputs) -->
+  <sink>
+    <name>in</name>
+    <type>message</type>
+  </sink>
+
+  <!-- Make one 'source' node per output. Sub-nodes:
+       * name (an identifier for the GUI)
+       * type
+       * vlen
+       * optional (set to 1 for optional inputs) -->
+  <source>
+    <name>out</name>
+    <type>message</type>
+  </source>
+</block>

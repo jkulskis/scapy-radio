@@ -16,8 +16,8 @@
 # along with GNU Radio; see the file COPYING.  If not, write to
 # the Free Software Foundation, Inc., 51 Franklin Street,
 # Boston, MA 02110-1301, USA.
-
 install(FILES
     zigbee_packet_sink_scapy.xml
-    zigbee_preamble_prefixer_scapy.xml DESTINATION share/gnuradio/grc/blocks
+    zigbee_preamble_prefixer_scapy.xml
+    zigbee_preamble_prefixer_scapy_fuzzer.xml DESTINATION share/gnuradio/grc/blocks
 )

@@ -26,6 +26,7 @@
 #include <gnuradio/io_signature.h>
 #include "preamble_prefixer_scapy_impl.h"
 #include <string.h>
+#include <time.h>
 #include <gnuradio/block_detail.h>
 
 namespace gr {
@@ -45,6 +46,7 @@ namespace gr {
         gr::io_signature::make(0, 0, 0),
         gr::io_signature::make(0, 0, 0))
     {
+        srand (time(NULL));
         buf[0] = 0x00;
         buf[1] = 0x00;
         buf[2] = 0x00;
@@ -71,7 +73,12 @@ void preamble_prefixer_scapy_impl::make_frame (pmt::pmt_t msg)
             detail().get()->set_done(true);
             return;
         }
-
+        buf[0] = rand()%255;
+        buf[1] = rand()%255;
+        buf[2] = rand()%255;
+        buf[3] = rand()%255;
+        buf[4] = rand()%255;
+        printf("---- Preamble buff 0: %d\n",buf[0]);
         assert(pmt::is_pair(msg));
         pmt::pmt_t blob = pmt::cdr(msg);
 

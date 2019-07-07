@@ -63,6 +63,7 @@ def srradio(pkts, inter=0.1, radio=None, ch=None, env=None, *args, **kargs):
     s = GnuradioSocket()
     a, b = sendrecv.sndrcv(s, pkts, inter=inter, verbose=True, *args, **kargs)
     s.close()
+    conf.gr_process.kill()
     return a, b
 
 @conf.commands.register

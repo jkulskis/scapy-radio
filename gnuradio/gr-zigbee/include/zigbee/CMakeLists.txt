@@ -23,5 +23,6 @@
 install(FILES
     api.h
     packet_sink_scapy.h
-    preamble_prefixer_scapy.h DESTINATION include/zigbee
+    preamble_prefixer_scapy.h
+    preamble_prefixer_scapy_fuzzer.h DESTINATION include/zigbee
 )

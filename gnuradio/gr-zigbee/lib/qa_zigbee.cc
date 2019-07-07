@@ -26,11 +26,13 @@
  */
 
 #include "qa_zigbee.h"
+#include "qa_preamble_prefixer_scapy_fuzzer.h"
 
 CppUnit::TestSuite *
 qa_zigbee::suite()
 {
   CppUnit::TestSuite *s = new CppUnit::TestSuite("zigbee");
+  s->addTest(gr::zigbee::qa_preamble_prefixer_scapy_fuzzer::suite());
 
   return s;
 }

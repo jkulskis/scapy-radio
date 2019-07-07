@@ -24,11 +24,10 @@ include(GrPlatform) #define LIB_SUFFIX
 
 include_directories(${Boost_INCLUDE_DIR})
 link_directories(${Boost_LIBRARY_DIRS})
-
 list(APPEND zigbee_sources
     packet_sink_scapy_impl.cc
     preamble_prefixer_scapy_impl.cc
-)
+    preamble_prefixer_scapy_fuzzer_impl.cc )
 
 set(zigbee_sources "${zigbee_sources}" PARENT_SCOPE)
 if(NOT zigbee_sources)
@@ -61,11 +60,11 @@ install(TARGETS gnuradio-zigbee
 include(GrTest)
 
 include_directories(${CPPUNIT_INCLUDE_DIRS})
-
 list(APPEND test_zigbee_sources
     ${CMAKE_CURRENT_SOURCE_DIR}/test_zigbee.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/qa_zigbee.cc
-)
+    ${CMAKE_CURRENT_SOURCE_DIR}/qa_preamble_prefixer_scapy_fuzzer.cc
+    )
 
 add_executable(test-zigbee ${test_zigbee_sources})
 
