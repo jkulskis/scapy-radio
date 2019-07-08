@@ -29,15 +29,12 @@ namespace gr {
     class preamble_prefixer_scapy_fuzzer_impl : public preamble_prefixer_scapy_fuzzer
     {
      private:
-      int octet1;
-      int octet2;
-      int octet3;
-      int octet4;
-      int octet5;
+      std::vector<int> minPreambleBytes;
+      std::vector<int> maxPreambleBytes;
       char buf[256];
 
      public:
-      preamble_prefixer_scapy_fuzzer_impl(int octet1, int octet2, int octet3, int octet4, int octet5);
+      preamble_prefixer_scapy_fuzzer_impl(std::vector<int> minPreambleBytes, std::vector<int> maxPreambleBytes);
       ~preamble_prefixer_scapy_fuzzer_impl();
 
       // Where all the action really happens

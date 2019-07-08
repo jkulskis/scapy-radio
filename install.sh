@@ -6,7 +6,9 @@
 pybombs_prefix=/pybombs
 
 scapy_install() {
-  cd scapy && python3 setup.py install && cd ..
+  cd scapy
+  sudo python3 setup.py install
+  cd ..
 }
 
 grc_install() {
@@ -22,8 +24,10 @@ grc_install() {
 gr_block_install() {
   orig="$(pwd)"
   cd "$1"
+  rm -rf build
   mkdir -p build
-  cd build && cmake -DCMAKE_PREFIX_PATH="$pybombs_prefix" .. && make && make install
+  cd build && cmake -DCMAKE_PREFIX_PATH="$pybombs_prefix" .. && make
+  sudo make install
   cd "$orig"
 }
 

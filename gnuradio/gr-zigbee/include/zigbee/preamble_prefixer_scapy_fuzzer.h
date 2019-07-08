@@ -46,7 +46,7 @@ namespace gr {
        * class. zigbee::preamble_prefixer_scapy_fuzzer::make is the public interface for
        * creating new instances.
        */
-      static sptr make(int octet1, int octet2, int octet3, int octet4, int octet5);
+      static sptr make(std::vector<int> minPreambleBytes, std::vector<int> maxPreambleBytes);
     };
 
   } // namespace zigbee
