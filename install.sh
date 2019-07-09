@@ -27,7 +27,8 @@ gr_block_install() {
   rm -rf build
   mkdir -p build
   cd build && cmake -DCMAKE_PREFIX_PATH="$pybombs_prefix" .. && make
-  sudo make install
+  #sudo make install
+  make install # docker doesn't have sudo
   cd "$orig"
 }
 

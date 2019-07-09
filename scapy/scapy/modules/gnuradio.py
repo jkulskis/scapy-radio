@@ -21,6 +21,7 @@ import scapy.layers.gnuradio
 from scapy.layers.dot15d4 import *
 import os
 import subprocess
+import time
 
 class GnuradioSocket(SuperSocket):
     desc = "read/write packets on a UDP Gnuradio socket"
@@ -42,6 +43,8 @@ class GnuradioSocket(SuperSocket):
     def recv(self, x=MTU):
         data, addr = self.ins.recvfrom(x)
         p = scapy.layers.gnuradio.GnuradioPacket(data)
+        # pkt = p.payload
+        # pkt = Dot15d4FCS(str(pkt))  # hack, because has_layer() did not work otherwise
         return p
 
     def send(self, pkt):
@@ -58,13 +61,24 @@ class GnuradioSocket(SuperSocket):
 @conf.commands.register
 def srradio(pkts, inter=0.1, radio=None, ch=None, env=None, *args, **kargs):
     """send and receive using a Gnuradio socket"""
+    sr_packets = []
     if radio is not None:
-        switch_radio_protocol(radio, ch=ch, env=env, mode='tx+rx')
+        switch_radio_protocol(radio, ch=ch, env=env, mode='rf')
     s = GnuradioSocket()
-    a, b = sendrecv.sndrcv(s, pkts, inter=inter, verbose=True, *args, **kargs)
+    for pkt in pkts:
+        recently_sent_pkt = str(pkt)
+        print(str(pkt.payload))
+        s.send(pkt)
+        start = time.time()
+        rv = sendrecv.sniff(opened_socket=s, timeout=5)
+        for r_pkt in rv:
+            if r_pkt != None and str(r_pkt) != recently_sent_pkt:
+                sr_packets.append(r_pkt)
+    #a, b = sendrecv.sndrcv(s, pkts, inter=inter, verbose=True, *args, **kargs)
     s.close()
     conf.gr_process.kill()
-    return a, b
+    #return a, b
+    return sr_packets
 
 @conf.commands.register
 def srradio1(pkts, radio=None, ch=None, env=None, *args, **kargs):

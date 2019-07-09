@@ -23,8 +23,6 @@
 
 #include <gnuradio/io_signature.h>
 #include "preamble_prefixer_scapy_fuzzer_impl.h"
-#include <string.h>
-#include <time.h>
 #include <gnuradio/block_detail.h>
 
 namespace gr {
