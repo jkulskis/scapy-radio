@@ -21,7 +21,6 @@ import scapy.layers.gnuradio
 from scapy.layers.dot15d4 import *
 import os
 import subprocess
-import time
 
 class GnuradioSocket(SuperSocket):
     desc = "read/write packets on a UDP Gnuradio socket"
@@ -43,41 +42,65 @@ class GnuradioSocket(SuperSocket):
     def recv(self, x=MTU):
         data, addr = self.ins.recvfrom(x)
         p = scapy.layers.gnuradio.GnuradioPacket(data)
-        # pkt = p.payload
-        # pkt = Dot15d4FCS(str(pkt))  # hack, because has_layer() did not work otherwise
         return p
 
-    def send(self, pkt):
-        if not pkt.haslayer(scapy.layers.gnuradio.GnuradioPacket):
-            pkt = scapy.layers.gnuradio.GnuradioPacket()/pkt
-            print('Added gnruadio layer to packet')
-        sx = str.encode(str(pkt))
+    def send(self, pkt, number=None):
+        # if not pkt.haslayer(scapy.layers.gnuradio.GnuradioPacket):
+        #     pkt = scapy.layers.gnuradio.GnuradioPacket()/pkt
+        #     print('Added gnruadio layer to packet')
+        if number is not None:
+            print('Sending Packet #{0}: {1}'.format(number, pkt.summary()))
+        else:
+            print('Sending Packet: {}'.format(pkt.summary()))
+        if isinstance(pkt, bytes):
+            sx = pkt
+        else:
+            sx = bytes(pkt)
         if hasattr(pkt, "sent_time"):
             pkt.sent_time = time.time()
-            print('Pkt Sent Time:', pkt.sent_time)
-        print('Sent', sx)
+            print('Pkt Sent Time: {}'.format(pkt.sent_time))
         self.outs.sendto(sx, self.tx_addr)
 
+def get_packet_layers(packet):
+    counter = 0
+    while True:
+        layer = packet.getlayer(counter)
+        if layer is None:
+            break
+        yield layer
+        counter += 1
+
 @conf.commands.register
-def srradio(pkts, inter=0.1, radio=None, ch=None, env=None, *args, **kargs):
+def srradio(pkts, wait_every=True, wait_timeout=0.25, radio=None, ch=None, env=None, *args, **kargs):
     """send and receive using a Gnuradio socket"""
     sr_packets = []
     if radio is not None:
         switch_radio_protocol(radio, ch=ch, env=env, mode='rf')
     s = GnuradioSocket()
+    number = 0
     for pkt in pkts:
-        recently_sent_pkt = str(pkt)
-        print(str(pkt.payload))
-        s.send(pkt)
-        start = time.time()
-        rv = sendrecv.sniff(opened_socket=s, timeout=5)
+        number += 1
+        #print('here')
+        s.send(pkt, number)
+        if wait_every:
+            print('Waiting {} seconds for responses...'.format(wait_timeout))
+            rv = sendrecv.sniff(opened_socket=s, timeout=wait_timeout)
+            for r_pkt in rv:
+                if r_pkt != None:
+                    if str(r_pkt) != str(pkt):
+                        print('Received packet at {timestamp}'.format(timestamp=r_pkt.time))
+                        sr_packets.append(r_pkt)
+    if not wait_every:
+        pkt_strings = [str(pkt) for pkt in pkts]
+        print('Waiting {} seconds for responses...'.format(wait_timeout))
+        rv = sendrecv.sniff(opened_socket=s, timeout=wait_timeout)
         for r_pkt in rv:
-            if r_pkt != None and str(r_pkt) != recently_sent_pkt:
-                sr_packets.append(r_pkt)
-    #a, b = sendrecv.sndrcv(s, pkts, inter=inter, verbose=True, *args, **kargs)
+            if r_pkt != None:
+                if str(r_pkt) not in pkt_strings: # make sure that it isn't a duplicate
+                    print('Received packet at {timestamp}'.format(timestamp=r_pkt.time))
+                    sr_packets.append(r_pkt)
     s.close()
     conf.gr_process.kill()
-    #return a, b
     return sr_packets
 
 @conf.commands.register

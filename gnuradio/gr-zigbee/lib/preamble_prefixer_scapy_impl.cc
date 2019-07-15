@@ -78,7 +78,7 @@ void preamble_prefixer_scapy_impl::make_frame (pmt::pmt_t msg)
         assert(data_len);
         assert(data_len < 256 - 5);
 
-        buf[5] = data_len-8;
+        buf[5] = data_len - 8;
 
         std::memcpy(buf + 6, ((const char*)pmt::blob_data(blob))+8, data_len - 8);
 

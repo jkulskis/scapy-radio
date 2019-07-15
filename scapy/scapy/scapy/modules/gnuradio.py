@@ -55,15 +55,48 @@ class GnuradioSocket(SuperSocket):
         print('Sent', sx)
         self.outs.sendto(sx, self.tx_addr)
 
+def get_packet_layers(packet):
+    counter = 0
+    while True:
+        layer = packet.getlayer(counter)
+        if layer is None:
+            break
+        yield layer
+        counter += 1
+
 @conf.commands.register
 def srradio(pkts, inter=0.1, radio=None, ch=None, env=None, *args, **kargs):
     """send and receive using a Gnuradio socket"""
+    sr_packets = []
     if radio is not None:
-        switch_radio_protocol(radio, ch=ch, env=env, mode='tx+rx')
+        switch_radio_protocol(radio, ch=ch, env=env, mode='rf')
     s = GnuradioSocket()
-    a, b = sendrecv.sndrcv(s, pkts, inter=inter, verbose=True, *args, **kargs)
+    for pkt in pkts:
+        # recently_sent_pkt = str(pkt.payload)
+        # print('Packet Payload: ', str(pkt.payload))
+        # for layer in get_packet_layers(pkt):
+        #         print('\n-----------------------------')
+        #         print('Layer: ', layer.name)
+        #         print('Layer str: ', str(layer))
+        # s.send(pkt.payload)
+        # start = time.time()
+        # rv = sendrecv.sniff(opened_socket=s, timeout=5)
+        # for r_pkt in rv:
+        #     print('Received Packet: ', str(r_pkt))
+        #     for layer in get_packet_layers(r_pkt):
+        #         print('\n-----------------------------')
+        #         print('Layer: ', layer.name)
+        #         print('Layer str: ', str(layer))
+        #     print('Received Packet Payload: ', str(r_pkt.payload))
+        #     if r_pkt != None and str(r_pkt) != recently_sent_pkt:
+        #         sr_packets.append(r_pkt)
+        a, b = sendrecv.sndrcv(s, pkts, inter=inter, verbose=True, store_unanswered=True, *args, **kargs)
+    print(a)
+    print(b)
     s.close()
-    return a, b
+    conf.gr_process.kill()
+    #return a, b
+    return sr_packets
 
 @conf.commands.register
 def srradio1(pkts, radio=None, ch=None, env=None, *args, **kargs):
