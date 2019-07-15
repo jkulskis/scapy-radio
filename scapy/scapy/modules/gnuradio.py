@@ -20,6 +20,7 @@ import atexit
 import scapy.layers.gnuradio
 from scapy.layers.dot15d4 import *
 import os
+import sys
 import subprocess
 
 class GnuradioSocket(SuperSocket):
@@ -45,13 +46,12 @@ class GnuradioSocket(SuperSocket):
         return p
 
     def send(self, pkt, number=None):
-        # if not pkt.haslayer(scapy.layers.gnuradio.GnuradioPacket):
-        #     pkt = scapy.layers.gnuradio.GnuradioPacket()/pkt
-        #     print('Added gnruadio layer to packet')
+        if not pkt.haslayer(scapy.layers.gnuradio.GnuradioPacket):
+            pkt = scapy.layers.gnuradio.GnuradioPacket()/pkt
         if number is not None:
-            print('Sending Packet #{0}: {1}'.format(number, pkt.summary()))
+            print('Sending Packet #{0}: {1}'.format(number, pkt.payload.summary()))
         else:
-            print('Sending Packet: {}'.format(pkt.summary()))
+            print('Sending Packet: {}'.format(pkt.payload.summary()))
         if isinstance(pkt, bytes):
             sx = pkt
         else:
@@ -70,27 +70,43 @@ def get_packet_layers(packet):
         yield layer
         counter += 1
 
+def wait_for_hardware(hardware):
+    if hardware == 'usrp':
+        search_string = ''
+    elif hardware == 'hackrf':
+        search_string = 'Using HackRF'
+    while True:
+        out = conf.gr_process.stdout.readline().decode('utf8')
+        if search_string in out:
+            time.sleep(1) # wait an extra second for everything to load up
+            break
+
 @conf.commands.register
-def srradio(pkts, wait_every=True, wait_timeout=0.25, radio=None, ch=None, env=None, *args, **kargs):
+def srradio(pkts, radio=None, hardware=None, listen=True, wait_every=True, wait_timeout=0.25, ch=None, env=None, *args, **kargs):
     """send and receive using a Gnuradio socket"""
     sr_packets = []
     if radio is not None:
-        switch_radio_protocol(radio, ch=ch, env=env, mode='rf')
+        if hardware == 'usrp':
+            switch_radio_protocol(radio, hardware=hardware, ch=ch, env=env, mode='rf')
+        elif hardware == 'hackrf':
+            switch_radio_protocol(radio, hardware=hardware, ch=ch, env=env, mode='tx')
     s = GnuradioSocket()
     number = 0
     for pkt in pkts:
         number += 1
-        #print('here')
         s.send(pkt, number)
         if wait_every:
-            print('Waiting {} seconds for responses...'.format(wait_timeout))
-            rv = sendrecv.sniff(opened_socket=s, timeout=wait_timeout)
-            for r_pkt in rv:
-                if r_pkt != None:
-                    if str(r_pkt) != str(pkt):
-                        print('Received packet at {timestamp}'.format(timestamp=r_pkt.time))
-                        sr_packets.append(r_pkt)
-    if not wait_every:
+            if hardware == 'ursp':
+                print('Waiting {} seconds for responses...'.format(wait_timeout))
+                rv = sendrecv.sniff(opened_socket=s, timeout=wait_timeout)
+                for r_pkt in rv:
+                    if r_pkt != None:
+                        if str(r_pkt) != str(pkt):
+                            print('Received packet at {timestamp}'.format(timestamp=r_pkt.time))
+                            sr_packets.append(r_pkt)
+            elif hardware == 'hackrf':
+                time.sleep(wait_timeout) # hackrf can't listen in between, but may want to simply wait in between
+    if not wait_every and hardware != 'hackrf': # can't receive + transmit with the hackrf...could start up a new tx flowgraph but that takes too much time
         pkt_strings = [str(pkt) for pkt in pkts]
         print('Waiting {} seconds for responses...'.format(wait_timeout))
         rv = sendrecv.sniff(opened_socket=s, timeout=wait_timeout)
@@ -99,22 +115,23 @@ def srradio(pkts, wait_every=True, wait_timeout=0.25, radio=None, ch=None, env=N
                 if str(r_pkt) not in pkt_strings: # make sure that it isn't a duplicate
                     print('Received packet at {timestamp}'.format(timestamp=r_pkt.time))
                     sr_packets.append(r_pkt)
+    print('Closing socket...')
+    time.sleep(2) # sleep for a couple seconds in case the socket was blocked up
     s.close()
     conf.gr_process.kill()
     return sr_packets
 
 @conf.commands.register
-def srradio1(pkts, radio=None, ch=None, env=None, *args, **kargs):
+def srradio1(pkts, radio=None, hardware=None, ch=None, env=None, *args, **kargs):
     """send and receive 1 packet using a Gnuradio socket"""
     a, b = srradio(pkts, radio=radio, ch=ch, env=env, *args, **kargs)
     if len(a) > 0:
         return a[0][1]
 
-
 @conf.commands.register
-def sniffradio(radio=None, ch=None, env=None, opened_socket=None, *args, **kargs):
+def sniffradio(radio=None, hardware=None, ch=None, env=None, opened_socket=None, *args, **kargs):
     if radio is not None:
-        switch_radio_protocol(radio, ch=ch, env=env, mode='rx')
+        switch_radio_protocol(radio, hardware=hardware, ch=ch, env=env, mode='rx')
     s = opened_socket if opened_socket is not None else GnuradioSocket()
     rv = sendrecv.sniff(opened_socket=s, *args, **kargs)
     if opened_socket is None:
@@ -122,26 +139,27 @@ def sniffradio(radio=None, ch=None, env=None, opened_socket=None, *args, **kargs
     conf.gr_process.kill()
     return rv
 
-
 def build_modulations_dict(env=None):
-    conf.gr_modulations = dict.fromkeys([x for x in os.listdir(conf.gr_mods_path)]) # Find what modulation folders exist
-    for key in conf.gr_modulations:
-        conf.gr_modulations[key] = {}
-    for modulation in conf.gr_modulations:
-        conf.gr_modulations[modulation]['dir'] = os.path.join(conf.gr_mods_path, modulation)
-        for mode in os.listdir(os.path.join(conf.gr_mods_path, modulation)):
-            if '_' in mode:
-                keyword = mode[mode.index('_') + 1:] # keyword example: tx, rx
-                conf.gr_modulations[modulation][keyword] = os.listdir(os.path.join(conf.gr_mods_path, modulation, mode))
-                if 'top_block.py' not in conf.gr_modulations[modulation][keyword]:
-                    try:
-                        outdir = "--directory=%s" % os.path.join(conf.gr_mods_path, modulation, mode)
-                        subprocess.check_call(['grcc', outdir, os.path.join(conf.gr_mods_path, modulation, mode,
-                            conf.gr_modulations[modulation][keyword][0])], env=env)
-                    except:
-                        conf.gr_modulations[modulation][keyword] = os.path.join(conf.gr_mods_path, modulation, mode, None)
-                        break
-                conf.gr_modulations[modulation][keyword] = os.path.join(conf.gr_mods_path, modulation, mode, 'top_block.py')
+    hardwares = ['hackrf', 'usrp']
+    for hardware in hardwares:
+        hardware_dir = os.path.join(conf.gr_mods_path, hardware)
+        conf.gr_modulations[hardware] = dict.fromkeys([x for x in os.listdir(hardware_dir)]) # Find what modulation folders exist
+        for modulation in conf.gr_modulations[hardware]:
+            conf.gr_modulations[hardware][modulation] = {} # set as empty dict one at a time to avoid references to the same dict
+            for mode in os.listdir(os.path.join(hardware_dir, modulation)):
+                if '_' in mode:
+                    keyword = mode[mode.index('_') + 1:] # keyword example: tx, rx
+                    keyword_files = os.listdir(os.path.join(hardware_dir, modulation, mode))
+                    if 'top_block.py' not in keyword_files: # check if the grc has been compiled
+                        try:
+                            print('Compiling {0} for {1}'.format(mode, hardware))
+                            outdir = "--directory=%s" % os.path.join(hardware_dir, modulation, mode) # try to compile the grc file
+                            subprocess.check_call(['grcc', outdir, os.path.join(hardware_dir, modulation, mode, keyword_files[0])], env=env)
+                            conf.gr_modulations[hardware][modulation][keyword] = os.path.join(hardware_dir, modulation, mode, 'top_block.py')
+                        except: # if compiling the grc failed, then set this modulation keyword to None
+                            conf.gr_modulations[hardware][modulation][keyword] = None
+                    else:
+                        conf.gr_modulations[hardware][modulation][keyword] = os.path.join(hardware_dir, modulation, mode, 'top_block.py')
 
 def sigint_ignore():
     import os
@@ -161,7 +179,6 @@ def gnuradio_set_vars(host="localhost", port=8080, **kargs):
             except xmlrpc.Fault:
                 print("Unknown variable '%s'" % k)
         s = None
-
 
 @conf.commands.register
 def gnuradio_get_vars(*args, **kargs):
@@ -187,7 +204,6 @@ def gnuradio_get_vars(*args, **kargs):
         return rv[args[0]]
     return rv
 
-
 @conf.commands.register
 def gnuradio_stop_graph(host="localhost", port=8080):
     try:
@@ -198,7 +214,6 @@ def gnuradio_stop_graph(host="localhost", port=8080):
         s = xmlrpc.Server("http://%s:%d" % (host, port))
         s.stop()
         s.wait()
-
 
 @conf.commands.register
 def gnuradio_start_graph(host="localhost", port=8080):
@@ -213,15 +228,14 @@ def gnuradio_start_graph(host="localhost", port=8080):
         except xmlrpc.Fault as e:
             print("ERROR: %s" % e.faultString)
 
-
 @conf.commands.register
-def switch_radio_protocol(layer, mode=None, env=None, ch=None, *args, **kargs):
+def switch_radio_protocol(layer, hardware=None, mode=None, env=None, ch=None, *args, **kargs):
     """Launches Gnuradio in background"""
     if not conf.gr_modulations:
         build_modulations_dict(env=env)
     if not hasattr(conf, 'gr_process_io') or conf.gr_process_io is None:
         conf.gr_process_io = {'stdout': open('/tmp/gnuradio.log', 'w+'), 'stderr': open('/tmp/gnuradio-err.log', 'w+')}
-    if layer not in conf.gr_modulations:
+    if layer not in conf.gr_modulations[hardware]:
         print("\nAvailable layers: %s" % ", ".join(conf.gr_modulations.keys()), '\n')
         raise AttributeError("Unknown radio layer %s" % layer)
     if conf.gr_process is not None:
@@ -229,16 +243,14 @@ def switch_radio_protocol(layer, mode=None, env=None, ch=None, *args, **kargs):
         conf.gr_process.kill()
         conf.gr_process = None
     try:
-        # conf.gr_process = subprocess.Popen(["python2", conf.gr_modulations[layer][mode], "-c", str(ch)], 
-        #                             stdout=subprocess.PIPE, stderr=conf.gr_process_io['stderr'], env=env)
-        # while 'Press Enter to quit' not in conf.gr_process.stdout.readline(): # Need a good way to check that the SDR is set up
-        #     time.sleep(.5)
-        conf.gr_process = subprocess.Popen(["python2", conf.gr_modulations[layer][mode], "-c", str(ch)], env=env)
-        time.sleep(5)
+        conf.gr_process = subprocess.Popen(["python2", conf.gr_modulations[hardware][layer][mode], "-c", str(ch)], env=env, bufsize=0, 
+                                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        print('Waiting for {}...'.format(hardware))
+        wait_for_hardware(hardware)
+        print('Starting Process')
     except OSError:
         return False
     return True
-
 
 def gnuradio_exit(c):
     if hasattr(c, "gr_process") and hasattr(c.gr_process, "kill"):
@@ -248,7 +260,6 @@ def gnuradio_exit(c):
             if os.path.isfile(c.gr_process_io[k]) and not c.gr_process_io[k].closed:
                 c.gr_process_io[k].close()
                 c.gr_process_io[k] = None
-
 
 atexit.register(gnuradio_exit, conf)
 conf.L2socket = GnuradioSocket
