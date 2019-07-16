@@ -72,14 +72,10 @@ def get_packet_layers(packet):
 
 def wait_for_hardware(hardware):
     if hardware == 'usrp':
-        search_string = ''
+        search_string = 'Press Enter to quit'
     elif hardware == 'hackrf':
-        search_string = 'Using HackRF'
-    while True:
-        out = conf.gr_process.stdout.readline().decode('utf8')
-        if search_string in out:
-            time.sleep(1) # wait an extra second for everything to load up
-            break
+        search_string = 'Press Enter to quit'
+    conf.gr_process.stdout.readline() # for now, just wait until a line is read...first stdout line is 'Press Enter to quit'
 
 @conf.commands.register
 def srradio(pkts, radio=None, hardware=None, listen=True, wait_every=True, wait_timeout=0.25, ch=None, env=None, *args, **kargs):
@@ -133,6 +129,7 @@ def sniffradio(radio=None, hardware=None, ch=None, env=None, opened_socket=None,
     if radio is not None:
         switch_radio_protocol(radio, hardware=hardware, ch=ch, env=env, mode='rx')
     s = opened_socket if opened_socket is not None else GnuradioSocket()
+    print('Sniffing on channel {}'.format(ch))
     rv = sendrecv.sniff(opened_socket=s, *args, **kargs)
     if opened_socket is None:
         s.close()
@@ -160,6 +157,16 @@ def build_modulations_dict(env=None):
                             conf.gr_modulations[hardware][modulation][keyword] = None
                     else:
                         conf.gr_modulations[hardware][modulation][keyword] = os.path.join(hardware_dir, modulation, mode, 'top_block.py')
+
+def strip_gnuradio_layer(packets):
+    if isinstance(packets, list):
+        new_packets = []
+        for ii in range(len(packets)):
+            if packets[ii].haslayer(scapy.layers.gnuradio.GnuradioPacket):
+                new_packets.append(pkt.payload)
+        return new_packets
+    elif packets.haslayer(scapy.layers.gnuradio.GnuradioPacket):
+        return packets.payload
 
 def sigint_ignore():
     import os
@@ -243,8 +250,8 @@ def switch_radio_protocol(layer, hardware=None, mode=None, env=None, ch=None, *a
         conf.gr_process.kill()
         conf.gr_process = None
     try:
-        conf.gr_process = subprocess.Popen(["python2", conf.gr_modulations[hardware][layer][mode], "-c", str(ch)], env=env, bufsize=0, 
-                                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        conf.gr_process = subprocess.Popen(["python2", conf.gr_modulations[hardware][layer][mode], "-c", str(ch)], env=env, bufsize=1, 
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
         print('Waiting for {}...'.format(hardware))
         wait_for_hardware(hardware)
         print('Starting Process')
