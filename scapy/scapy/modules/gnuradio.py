@@ -45,21 +45,32 @@ class GnuradioSocket(SuperSocket):
         p = scapy.layers.gnuradio.GnuradioPacket(data)
         return p
 
-    def send(self, pkt, number=None):
+    def send(self, pkt):
         if not pkt.haslayer(scapy.layers.gnuradio.GnuradioPacket):
             pkt = scapy.layers.gnuradio.GnuradioPacket()/pkt
-        if number is not None:
-            print('Sending Packet #{0}: {1}'.format(number, pkt.payload.summary()))
-        else:
-            print('Sending Packet: {}'.format(pkt.payload.summary()))
         if isinstance(pkt, bytes):
             sx = pkt
         else:
-            sx = bytes(pkt)
-        if hasattr(pkt, "sent_time"):
-            pkt.sent_time = time.time()
-            print('Pkt Sent Time: {}'.format(pkt.sent_time))
+            sx = bytes(pkt) 
         self.outs.sendto(sx, self.tx_addr)
+
+def parse_parameters(**kwargs):
+    paramter_args = []
+    for arg, v in kwargs.items():
+        if len(arg) == 1: # using short ID
+            paramter_args.append('-{}'.format(arg))
+        else: # if len(arg) > 1, then using the full ID
+            paramter_args.append('--{}'.format(arg))
+        paramter_args.append(str(v))
+    return paramter_args
+
+def get_parameter(short_id=None, long_id=None, params=[]):
+    if short_id and '-{}'.format(short_id) in params:
+        return params[params.index('-{}'.format(short_id)) + 1]
+    elif long_id and '--{}'.format(long_id) in params:
+        return params[params.index('--{}'.format(long_id)) + 1]
+    else:
+        return None
 
 def get_packet_layers(packet):
     counter = 0
@@ -72,34 +83,48 @@ def get_packet_layers(packet):
 
 def wait_for_hardware(hardware):
     if hardware == 'usrp':
-        search_string = 'Press Enter to quit'
+        search_string = 'Press Enter to quit' # need to change to usrp specific string since press enter to quit takes time to load up
     elif hardware == 'hackrf':
-        search_string = 'Press Enter to quit'
-    conf.gr_process.stdout.readline() # for now, just wait until a line is read...first stdout line is 'Press Enter to quit'
+        search_string = 'Using HackRF'
+    while True:
+        time.sleep(.1) # don't read constantly to avoid creating a heavy process
+        conf.gr_process_io['stderr'].seek(0)
+        out = conf.gr_process_io['stderr'].read()
+        if out and search_string in out:
+            time.sleep(0.5) # wait an extra half second, since there is a small delay
+            break
 
 @conf.commands.register
-def srradio(pkts, radio=None, hardware=None, listen=True, wait_every=True, wait_timeout=0.25, ch=None, env=None, *args, **kargs):
+def srradio(pkts, radio=None, hardware=None, listen=True, wait_every=True, wait_timeout=0.25, env=None, fuzz=False, params=[], prn=None, *args, **kwargs):
     """send and receive using a Gnuradio socket"""
-    sr_packets = []
+    ch = get_parameter(short_id='c', long_id='channel', params=params)
+    print('Sending on channel {}'.format(ch))
+    rx_packets = []
     if radio is not None:
         if hardware == 'usrp':
-            switch_radio_protocol(radio, hardware=hardware, ch=ch, env=env, mode='rf')
+            if fuzz:
+                pass
+                switch_radio_protocol(radio, hardware=hardware, env=env, mode='rf_fuzz', params=params)
+            else:
+                switch_radio_protocol(radio, hardware=hardware, env=env, mode='rf', params=params)
         elif hardware == 'hackrf':
-            switch_radio_protocol(radio, hardware=hardware, ch=ch, env=env, mode='tx')
+            switch_radio_protocol(radio, hardware=hardware, env=env, mode='tx', params=params)
     s = GnuradioSocket()
     number = 0
     for pkt in pkts:
         number += 1
-        s.send(pkt, number)
+        s.send(pkt)
+        if prn:
+            prn(pkt, number, tx=True)
         if wait_every:
             if hardware == 'ursp':
                 print('Waiting {} seconds for responses...'.format(wait_timeout))
                 rv = sendrecv.sniff(opened_socket=s, timeout=wait_timeout)
                 for r_pkt in rv:
-                    if r_pkt != None:
-                        if str(r_pkt) != str(pkt):
-                            print('Received packet at {timestamp}'.format(timestamp=r_pkt.time))
-                            sr_packets.append(r_pkt)
+                    if r_pkt is not None and str(r_pkt) != str(pkt):
+                        if prn:
+                            prn(pkt, number)
+                        rx_packets.append(r_pkt)
             elif hardware == 'hackrf':
                 time.sleep(wait_timeout) # hackrf can't listen in between, but may want to simply wait in between
     if not wait_every and hardware != 'hackrf': # can't receive + transmit with the hackrf...could start up a new tx flowgraph but that takes too much time
@@ -109,32 +134,41 @@ def srradio(pkts, radio=None, hardware=None, listen=True, wait_every=True, wait_
         for r_pkt in rv:
             if r_pkt != None:
                 if str(r_pkt) not in pkt_strings: # make sure that it isn't a duplicate
-                    print('Received packet at {timestamp}'.format(timestamp=r_pkt.time))
-                    sr_packets.append(r_pkt)
+                    if prn:
+                        prn(pkt, number)
+                    rx_packets.append(r_pkt)
     print('Closing socket...')
     time.sleep(2) # sleep for a couple seconds in case the socket was blocked up
     s.close()
-    conf.gr_process.kill()
-    return sr_packets
+    kill_process()
+    return rx_packets
 
 @conf.commands.register
-def srradio1(pkts, radio=None, hardware=None, ch=None, env=None, *args, **kargs):
+def srradio1(pkts, radio=None, hardware=None, env=None, params=[], *args, **kwargs):
     """send and receive 1 packet using a Gnuradio socket"""
-    a, b = srradio(pkts, radio=radio, ch=ch, env=env, *args, **kargs)
+    a, b = srradio(pkts, radio=radio, env=env, params=params, *args, **kwargs)
     if len(a) > 0:
         return a[0][1]
 
 @conf.commands.register
-def sniffradio(radio=None, hardware=None, ch=None, env=None, opened_socket=None, *args, **kargs):
+def sniffradio(radio=None, hardware=None, env=None, opened_socket=None, params= [], *args, **kwargs):
     if radio is not None:
-        switch_radio_protocol(radio, hardware=hardware, ch=ch, env=env, mode='rx')
+        switch_radio_protocol(radio, hardware=hardware, env=env, mode='rx', params=params)
     s = opened_socket if opened_socket is not None else GnuradioSocket()
+    ch = get_parameter(short_id='c', long_id='channel', params=params)
     print('Sniffing on channel {}'.format(ch))
-    rv = sendrecv.sniff(opened_socket=s, *args, **kargs)
+    rv = sendrecv.sniff(opened_socket=s, *args, **kwargs)
     if opened_socket is None:
         s.close()
-    conf.gr_process.kill()
+    kill_process()
     return rv
+
+@conf.commands.register
+def kill_process():
+    if not conf.gr_process.poll(): # check if the process is running
+        conf.gr_process.stdin.write('\r\n'.encode()) # send a newline to gracefully stop the gnruadio process before killing
+        conf.gr_process.stdin.close()
+        conf.gr_process.kill()
 
 def build_modulations_dict(env=None):
     hardwares = ['hackrf', 'usrp']
@@ -163,24 +197,29 @@ def strip_gnuradio_layer(packets):
         new_packets = []
         for ii in range(len(packets)):
             if packets[ii].haslayer(scapy.layers.gnuradio.GnuradioPacket):
-                new_packets.append(pkt.payload)
+                new_packets.append(packets[ii].payload)
+            else:
+                new_packets.append(packets[ii])
         return new_packets
-    elif packets.haslayer(scapy.layers.gnuradio.GnuradioPacket):
-        return packets.payload
+    else:
+        if packets.haslayer(scapy.layers.gnuradio.GnuradioPacket):
+            return packets.payload
+        else:
+            return packets
 
 def sigint_ignore():
     import os
     os.setpgrp()
 
 @conf.commands.register
-def gnuradio_set_vars(host="localhost", port=8080, **kargs):
+def gnuradio_set_vars(host="localhost", port=8080, **kwargs):
     try:
         import xmlrpc
     except ImportError:
         print("xmlrpc is missing to use this function.")
     else:
         s = xmlrpc.Server("http://%s:%d" % (host, port))
-        for k, v in kargs.iteritems():
+        for k, v in kwargs.iteritems():
             try:
                 getattr(s, "set_%s" % k)(v)
             except xmlrpc.Fault:
@@ -188,18 +227,18 @@ def gnuradio_set_vars(host="localhost", port=8080, **kargs):
         s = None
 
 @conf.commands.register
-def gnuradio_get_vars(*args, **kargs):
-    if "host" not in kargs:
-        kargs["host"] = "127.0.0.1"
-    if "port" not in kargs:
-        kargs["port"] = 8080
+def gnuradio_get_vars(*args, **kwargs):
+    if "host" not in kwargs:
+        kwargs["host"] = "127.0.0.1"
+    if "port" not in kwargs:
+        kwargs["port"] = 8080
     rv = {}
     try:
         import xmlrpc
     except ImportError:
         print("xmlrpc is missing to use this function.")
     else:
-        s = xmlrpc.Server("http://%s:%d" % (kargs["host"], kargs["port"]))
+        s = xmlrpc.Server("http://%s:%d" % (kwargs["host"], kwargs["port"]))
         for v in args:
             try:
                 res = getattr(s, "get_%s" % v)()
@@ -218,7 +257,7 @@ def gnuradio_stop_graph(host="localhost", port=8080):
     except ImportError:
         print("xmlrpc is missing to use this function.")
     else:
-        s = xmlrpc.Server("http://%s:%d" % (host, port))
+        s = xmlrpc.Server("http://{host}:{port}".format(host=host, port=port))
         s.stop()
         s.wait()
 
@@ -229,32 +268,32 @@ def gnuradio_start_graph(host="localhost", port=8080):
     except ImportError:
         print("xmlrpclib is missing to use this function.")
     else:
-        s = xmlrpc.Server("http://%s:%d" % (host, port))
+        s = xmlrpc.Server("http://{host}:{port}".format(host=host, port=port))
         try:
             s.start()
         except xmlrpc.Fault as e:
-            print("ERROR: %s" % e.faultString)
+            print("ERROR: {}".format(e.faultString))
 
 @conf.commands.register
-def switch_radio_protocol(layer, hardware=None, mode=None, env=None, ch=None, *args, **kargs):
+def switch_radio_protocol(layer, hardware=None, mode=None, env=None, params=[], *args, **kwargs):
     """Launches Gnuradio in background"""
     if not conf.gr_modulations:
         build_modulations_dict(env=env)
     if not hasattr(conf, 'gr_process_io') or conf.gr_process_io is None:
         conf.gr_process_io = {'stdout': open('/tmp/gnuradio.log', 'w+'), 'stderr': open('/tmp/gnuradio-err.log', 'w+')}
     if layer not in conf.gr_modulations[hardware]:
-        print("\nAvailable layers: %s" % ", ".join(conf.gr_modulations.keys()), '\n')
+        print("\nAvailable layers: %s" % ", ".join(conf.gr_modulations[hardware].keys()), '\n')
         raise AttributeError("Unknown radio layer %s" % layer)
     if conf.gr_process is not None:
         # An instance is already running
-        conf.gr_process.kill()
+        kill_process()
         conf.gr_process = None
     try:
-        conf.gr_process = subprocess.Popen(["python2", conf.gr_modulations[hardware][layer][mode], "-c", str(ch)], env=env, bufsize=1, 
-                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
+        conf.gr_process = subprocess.Popen(["python2", conf.gr_modulations[hardware][layer][mode]] + params, env=env, bufsize=1, 
+                                            stdout=conf.gr_process_io['stdout'], stderr=conf.gr_process_io['stderr'], stdin=subprocess.PIPE)
         print('Waiting for {}...'.format(hardware))
         wait_for_hardware(hardware)
-        print('Starting Process')
+        print('Loaded up {}'.format(hardware))
     except OSError:
         return False
     return True
