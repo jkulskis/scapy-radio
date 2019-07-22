@@ -55,7 +55,7 @@ namespace gr {
           this->maxPreambleBytes[ii] = 1;
         }
         if (this->minPreambleBytes[ii] >= this->maxPreambleBytes[ii]) {
-          this->minPreambleBytes[ii] = this->maxPreambleBytes[ii] - 1;
+          this->maxPreambleBytes[ii] = this->minPreambleBytes[ii] + 1;
         }
       }
       //Queue stuff
