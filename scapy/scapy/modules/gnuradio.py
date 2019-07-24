@@ -176,9 +176,7 @@ def srradio(
                             prn(r_pkt)
                         rx_packets.append(r_pkt)
             elif hardware == "hackrf":
-                # hackrf can't listen in between, but may want to simply wait in between
-                print("Waiting {} seconds...".format(wait_times[ii]))
-                time.sleep(wait_times)
+                time.sleep(wait_times[ii])
     # can't receive + transmit with the hackrf...could start up a new tx flowgraph but that takes too much time
     if hardware != "hackrf":
         print("Emptying socket of any responses...")

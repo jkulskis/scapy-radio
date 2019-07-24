@@ -52,7 +52,7 @@ namespace gr {
           this->maxPreambleBytes[ii] = 256;
         }
         else if (this->maxPreambleBytes[ii] < 1) {
-          this->maxPreambleBytes[ii] = 1;
+          this->maxPreambleBytes[ii] = 0;
         }
         if (this->minPreambleBytes[ii] >= this->maxPreambleBytes[ii]) {
           this->maxPreambleBytes[ii] = this->minPreambleBytes[ii] + 1;
