@@ -129,7 +129,7 @@ def srradio(
 ):
     """send and receive using a Gnuradio socket"""
     ch = get_parameter(short_id="c", long_id="channel", params=params)
-    print("Sending on channel {}".format(ch))
+    print("\nSending on channel {}".format(ch))
     rx_packets = []
     if radio is not None:
         if hardware == "usrp":
@@ -213,7 +213,7 @@ def sniffradio(
             return []
     s = opened_socket if opened_socket is not None else GnuradioSocket()
     ch = get_parameter(short_id="c", long_id="channel", params=params)
-    print("Sniffing on channel {}".format(ch))
+    print("\nSniffing on channel {}".format(ch))
     rv = sendrecv.sniff(opened_socket=s, *args, **kwargs)
     if opened_socket is None:
         s.close()
@@ -225,8 +225,11 @@ def sniffradio(
 def kill_process():
     if not conf.gr_process.poll():  # check if the process is running
         # send a newline to gracefully stop the gnruadio process before killing
-        conf.gr_process.stdin.write("\r\n".encode())
-        conf.gr_process.stdin.close()
+        try:
+            conf.gr_process.stdin.write("\r\n".encode())
+            conf.gr_process.stdin.close()
+        except ValueError: # may be closed
+            pass
         conf.gr_process.kill()
 
 
@@ -406,7 +409,7 @@ def switch_radio_protocol(
         #     stderr=conf.gr_process_io["stderr"],
         #     stdin=subprocess.PIPE,
         # )
-        print("Waiting for {}...".format(hardware))
+        print("\nWaiting for {}...".format(hardware))
         if wait_for_hardware(hardware) == 1:
             print("{} is Busy".format(hardware))
             return False
