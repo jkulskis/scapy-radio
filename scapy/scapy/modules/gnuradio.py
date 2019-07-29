@@ -8,8 +8,6 @@
 Gnuradio layers, sockets and send/receive functions.
 """
 
-import socket
-import struct
 from scapy.config import conf
 from scapy.data import MTU
 from scapy.packet import *
@@ -17,13 +15,74 @@ from scapy.fields import *
 from scapy.supersocket import SuperSocket
 from scapy import sendrecv
 from scapy import main
+from appdirs import user_data_dir
+import socket
+import struct
 import atexit
 import scapy.layers.gnuradio
-from scapy.layers.dot15d4 import *
 import os
 import sys
 import subprocess
 import time
+
+
+class Radio:
+    def __init__(self, hardware=None):
+        self.hardware = hardware  # usrp, hackrf, etc.
+        self.load_variables = {}
+        self.modulations = (
+            conf.gr_modulations[self.hardware]
+            if self.hardware in conf.gr_modulations
+            else {}
+        )
+        self.protocols = self.modulations.keys()
+        self.update_load_variables()
+
+    def wait_for_hardware(self, hardware):
+        if self.hardware == "usrp":
+            # need to change to usrp specific string since press enter to quit takes time to load up
+            load_string = "Actually got clock rate 32.000000 MHz"
+            busy_string = "KeyError: No devices found for"
+            sleep_time = 1.5
+        elif self.hardware == "hackrf":
+            load_string = "Using HackRF"
+            busy_string = "Resource busy"
+            sleep_time = 0.5
+        else:
+            time.sleep(10)
+            return 0
+        while True:
+            # don't read constantly to avoid creating a heavy process
+            time.sleep(0.1)
+            conf.gr_process_io["stderr"].seek(0)
+            out = conf.gr_process_io["stderr"].read()
+            if out:
+                if load_string in out:
+                    # wait an extra half second, since there is a small delay
+                    time.sleep(sleep_time)
+                    return 0
+                elif busy_string in out:
+                    return 1
+    
+    def __getitem__(self, key):
+        return self.modulations[key]
+    
+    def __setitem__(self, key, value):
+        self.modulations[key] = value
+    
+    def add_protocol(self, protocol):
+        if protocol not in self.modulations:
+            self.modulations[protocol] = {}
+            return True
+        else:
+            return False
+    
+    def add_protocol_mode(self, protocol, mode):
+        if protocol not in self.modulations:
+            self.modulations[protocol] = {}
+
+    def protocol_modes(self, protocol):
+        return self.modulations[protocol].keys()
 
 
 class GnuradioSocket(SuperSocket):
@@ -157,7 +216,7 @@ def srradio(
     s = GnuradioSocket()
     number = 0
     pkt_strings = [str(pkt) for pkt in strip_gnuradio_layer(pkts)]
-    if not isinstance(wait_times, list): # either list, numeral, or None
+    if not isinstance(wait_times, list):  # either list, numeral, or None
         wait_times = [wait_times] * len(pkts)
     for ii in range(len(pkts)):
         number += 1
@@ -167,11 +226,12 @@ def srradio(
         if wait_times[ii]:
             print("Waiting {} seconds...".format(wait_times[ii]))
             if hardware == "usrp":
-                rv = sendrecv.sniff(opened_socket=s, timeout=wait_times[ii]) 
+                rv = sendrecv.sniff(opened_socket=s, timeout=wait_times[ii])
                 for r_pkt in rv:
-                    if r_pkt is not None and str(
-                        strip_gnuradio_layer(r_pkt)
-                    ) != pkt_strings[ii]:
+                    if (
+                        r_pkt is not None
+                        and str(strip_gnuradio_layer(r_pkt)) != pkt_strings[ii]
+                    ):
                         if prn:
                             prn(r_pkt)
                         rx_packets.append(r_pkt)
@@ -180,7 +240,9 @@ def srradio(
     # can't receive + transmit with the hackrf...could start up a new tx flowgraph but that takes too much time
     if hardware != "hackrf":
         print("Emptying socket of any responses...")
-        rv = sendrecv.sniff(opened_socket=s, timeout=3) # wait 3 seconds to empty the socket
+        rv = sendrecv.sniff(
+            opened_socket=s, timeout=3
+        )  # wait 3 seconds to empty the socket
         for r_pkt in rv:
             if (
                 r_pkt is not None
@@ -228,7 +290,7 @@ def kill_process():
         try:
             conf.gr_process.stdin.write("\r\n".encode())
             conf.gr_process.stdin.close()
-        except ValueError: # may be closed
+        except ValueError:  # may be closed
             pass
         conf.gr_process.kill()
 
