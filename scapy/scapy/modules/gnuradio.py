@@ -36,11 +36,9 @@ class Radio:
 
     def update_protocols(self):
         try:
-            self.protocols = (
-                conf.gr_modulations[self.hardware]
-                if self.hardware in conf.gr_modulations
-                else {}
-            )
+            for protocol, hardwares in conf.gr_modulations.items():
+                if self.hardware in hardwares.keys():
+                    self.protocols[protocol] = conf.gr_modulations[protocol][self.hardware]
         except AttributeError:  # conf.gr_modulations hasn't been loaded up yet
             initial_setup()
             self.update_protocols()
@@ -304,7 +302,6 @@ def srradio1(pkts, protocol=None, radio=None, env=None, params=[], *args, **kwar
 def sniffradio(
     protocol=None, radio=None, env=None, opened_socket=None, params=[], *args, **kwargs
 ):
-    hardware = radio.hardware
     if protocol is not None:
         if not switch_radio_protocol(
             protocol, radio=radio, env=env, mode="rx", params=params
@@ -334,22 +331,6 @@ def kill_process():
                 v.close()
                 v = None
         conf.gr_process.kill()
-
-
-def build_modulations_dict(env=None):
-    hardwares = ["hackrf", "usrp"]
-    for hardware in hardwares:
-        hardware_dir = os.path.join(conf.gr_mods_path, hardware)
-        conf.gr_modulations[hardware] = dict.fromkeys(
-            [x for x in os.listdir(hardware_dir)]
-        )  # Find what protocol folders exist
-        for protocol in conf.gr_modulations[hardware]:
-            # set as empty dict one at a time to avoid references to the same dict
-            conf.gr_modulations[hardware][protocol] = {}
-            for mode in os.listdir(os.path.join(hardware_dir, protocol)):
-                mode_path = os.path.join(hardware_dir, protocol, mode)
-                build_protocol_mode(
-                    protocol=protocol, mode_path=mode_path, hardware=hardware, env=env)
 
 
 def build_protocol_mode(protocol=None, mode_path=None, hardware=None, env=None):
@@ -404,40 +385,47 @@ def build_protocol_mode(protocol=None, mode_path=None, hardware=None, env=None):
         except:  # if compiling the grc failed, then set this protocol mode to None
             print("Compilation of {0} for {1} failed".format(
                 base_dir_name, hardware))
-            conf.gr_modulations[hardware][protocol][mode] = None
+            conf.gr_modulations[protocol][hardware][mode] = None
     else:
-        conf.gr_modulations[hardware][protocol][mode] = os.path.join(
+        conf.gr_modulations[protocol][hardware][mode] = os.path.join(
             mode_path, compiled_file_name)
 
 
 def update_protocol_mode(protocol=None, mode_path=None, hardware=None, env=None):
-    if hardware not in conf.gr_modulations:
-        conf.gr_modulations[hardware] = {}
-    if protocol not in conf.gr_modulations[hardware]:
-        conf.gr_modulations[hardware][protocol] = {}
+    if protocol not in conf.gr_modulations:
+        conf.gr_modulations[protocol] = {hardware: {}}
+    elif hardware not in conf.gr_modulations[protocol]:
+        conf.gr_modulations[protocol][hardware] = {}
     build_protocol_mode(protocol=protocol, mode_path=mode_path,
                         hardware=hardware, env=env)
 
 
-def update_protocol(protocol_path=None, hardware=None, env=None):
-    if not hardware:
-        print('Specify a hardware to add this protocol to')
+def update_hardware(hardware_path=None, protocol=None, env=None):
+    if not protocol:
+        print('The protocol that this hardware directory is for must be given')
         return 1
-    if os.path.basename(protocol_path):
-        protocol = os.path.basename(protocol_path)
+    if os.path.basename(hardware_path):
+        hardware = os.path.basename(hardware_path)
     else:
-        protocol = os.path.basename(os.path.dirname(protocol_path))
-    for mode_path in [f.path for f in os.scandir(protocol_path) if f.is_dir()]:
+        hardware = os.path.basename(os.path.dirname(hardware_path))
+    for mode_path in [f.path for f in os.scandir(hardware_path) if f.is_dir()]:
         update_protocol_mode(
             protocol=protocol, mode_path=mode_path, hardware=hardware, env=env)
 
 
-def update_hardware(hardware_path=None, env=None):
-    for hardware in os.listdir(hardware_path):
-        for protocol in os.listdir(os.path.join(hardware_path, hardware)):
-            for mode_path in [f.path for f in os.scandir(os.path.join(hardware_path, hardware, protocol)) if f.is_dir()]:
-                update_protocol_mode(
-                    protocol=protocol, mode_path=mode_path, hardware=hardware, env=env)
+def update_protocol(protocol_path=None, env=None):
+    if os.path.basename(protocol_path):
+        protocol = os.path.basename(protocol_path)
+    else:
+        protocol = os.path.basename(os.path.dirname(protocol_path))
+    for hardware_path in [f.path for f in os.scandir(protocol_path) if f.is_dir()]:
+        update_hardware(hardware_path=hardware_path,
+                        protocol=protocol, env=env)
+
+
+def build_modulations_dict(env=None):
+    for protocol_path in [f.path for f in os.scandir(conf.gr_mods_path) if f.is_dir()]:
+        update_protocol(protocol_path=protocol_path, env=env)
 
 
 def strip_gnuradio_layer(packets):
@@ -542,10 +530,15 @@ def switch_radio_protocol(
             "stdout": open("/tmp/gnuradio.log", "w+"),
             "stderr": open("/tmp/gnuradio-err.log", "w+"),
         }
-    if protocol not in conf.gr_modulations[hardware]:
+    
+    if protocol not in conf.gr_modulations:
+        available_protocols = []
+        for protocol, hardwares in conf.gr_modulations.items():
+            if radio.hardware in hardwares.keys():
+                available_protocols.append(protocol)
         print(
-            "\nAvailable protocols: {}\n".format(", ".join(
-                conf.gr_modulations[hardware].keys()))
+            "Invalid protocol\nAvailable protocols for {}: {}\n".format(radio.hardware, ", ".join(
+                available_protocols))
         )
         raise AttributeError("Unknown radio protocol".format(protocol))
     if conf.gr_process is not None:
@@ -554,7 +547,7 @@ def switch_radio_protocol(
         conf.gr_process = None
     try:
         conf.gr_process = subprocess.Popen(
-            ["python2", conf.gr_modulations[hardware][protocol][mode]] + params,
+            ["python2", conf.gr_modulations[protocol][hardware][mode]] + params,
             env=env,
             bufsize=1,
             stdout=conf.gr_process_io["stdout"],
