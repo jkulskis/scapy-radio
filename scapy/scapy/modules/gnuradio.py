@@ -110,6 +110,22 @@ class Radio:
                 return False
 
 
+def find_all_hardware(env=None):
+    hardware_checks = [('usrp', 'uhd_find_devices'),
+                       ('hackrf', 'hackrf_info')]
+    available_hardware = []
+    for hardware_info in hardware_checks:
+        try:  # try to find a usrp first, since full duplex is optimal for testing
+            find_process = subprocess.check_call(
+                hardware_info[1], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, env=None)
+            if find_process == 0:
+                available_hardware.append(hardware_info[0])
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            # if they don't have this hardware's drivers (FileNotFoundError) or one is not plugged in (returns exit code 1), just move on and try for the next hardware
+            pass
+    return available_hardware
+
+
 class GnuradioSocket(SuperSocket):
     desc = "read/write packets on a UDP Gnuradio socket"
 
@@ -216,39 +232,20 @@ def srradio(
     ch = get_parameter(short_id="c", long_id="channel", params=params)
     print("\nSending on channel {}".format(ch))
     rx_packets = []
-    if radio.hardware == "usrp":
-        if preamble_fuzz:
-            if not switch_radio_protocol(
-                protocol, radio=radio, env=env, mode="rf_fuzz", params=params
-            ):
-                return []
-        else:
-            if not switch_radio_protocol(
-                protocol, radio=radio, env=env, mode="rf", params=params
-            ):
-                return []
-    elif radio.hardware == "hackrf":
-        if preamble_fuzz:
-            if not switch_radio_protocol(
-                protocol, radio=radio, env=env, mode="tx_fuzz", params=params
-            ):
-                return []
-        else:
-            if not switch_radio_protocol(
-                protocol, radio=radio, env=env, mode="tx", params=params
-            ):
-                return []
-    else:  # if not a known radio, try to use rf / tx
-        if not switch_radio_protocol(
-                protocol, radio=radio, env=env, mode="rf", params=params
-        ):
-            if not switch_radio_protocol(
-                protocol, radio=radio, env=env, mode="tx", params=params
-            ):
-                return []
+    if preamble_fuzz:
+        mode = switch_radio_protocol(protocol, radio=radio, env=env, modes=[
+                                     "rf_fuzz", "tx_fuzz"], params=params)
+        if mode is None:
+            return []
+    else:
+        mode = switch_radio_protocol(protocol, radio=radio, env=env, mode=[
+                                     "rf", "tx"], params=params)
+        if mode is None:
+            return []
     s = GnuradioSocket()
     number = 0
     pkt_strings = [str(pkt) for pkt in strip_gnuradio_layer(pkts)]
+    full_duplex = mode in ('rf', 'rf_fuzz')
     if not isinstance(wait_times, list):  # either list, numeral, or None
         wait_times = [wait_times] * len(pkts)
     for ii in range(len(pkts)):
@@ -258,7 +255,7 @@ def srradio(
             prn(pkts[ii], number, tx=True)
         if wait_times[ii]:
             print("Waiting {} seconds...".format(wait_times[ii]))
-            if radio.hardware == "usrp":
+            if full_duplex:
                 rv = sendrecv.sniff(opened_socket=s, timeout=wait_times[ii])
                 for r_pkt in rv:
                     if (
@@ -268,10 +265,9 @@ def srradio(
                         if prn:
                             prn(r_pkt)
                         rx_packets.append(r_pkt)
-            elif radio.hardware == "hackrf":
+            else:
                 time.sleep(wait_times[ii])
-    # can't receive + transmit with the hackrf...could start up a new tx flowgraph but that takes too much time
-    if radio.hardware != "hackrf":
+    if full_duplex:
         print("Emptying socket of any responses...")
         rv = sendrecv.sniff(
             opened_socket=s, timeout=3
@@ -304,7 +300,7 @@ def sniffradio(
 ):
     if protocol is not None:
         if not switch_radio_protocol(
-            protocol, radio=radio, env=env, mode="rx", params=params
+            protocol, radio=radio, env=env, modes="rx", params=params
         ):
             return []
     s = opened_socket if opened_socket is not None else GnuradioSocket()
@@ -519,7 +515,7 @@ def gnuradio_start_graph(host="localhost", port=8080):
 
 @conf.commands.register
 def switch_radio_protocol(
-    protocol, radio=None, mode=None, env=None, params=[], *args, **kwargs
+    protocol, radio=None, modes=None, env=None, params=[], *args, **kwargs
 ):
     hardware = radio.hardware
     """Launches Gnuradio in background"""
@@ -530,7 +526,7 @@ def switch_radio_protocol(
             "stdout": open("/tmp/gnuradio.log", "w+"),
             "stderr": open("/tmp/gnuradio-err.log", "w+"),
         }
-    
+
     if protocol not in conf.gr_modulations:
         available_protocols = []
         for protocol, hardwares in conf.gr_modulations.items():
@@ -540,23 +536,37 @@ def switch_radio_protocol(
             "Invalid protocol\nAvailable protocols for {}: {}\n".format(radio.hardware, ", ".join(
                 available_protocols))
         )
-        raise AttributeError("Unknown radio protocol".format(protocol))
+        raise AttributeError("Unknown radio protocol: {}".format(protocol))
     if conf.gr_process is not None:
         # An instance is already running
         kill_process()
         conf.gr_process = None
-    try:
-        conf.gr_process = subprocess.Popen(
-            ["python2", conf.gr_modulations[protocol][hardware][mode]] + params,
-            env=env,
-            bufsize=1,
-            stdout=conf.gr_process_io["stdout"],
-            stderr=conf.gr_process_io["stderr"],
-            stdin=subprocess.PIPE,
-        )
-        return radio.wait_for_hardware()
-    except (OSError, KeyError):
-        return False
+    if isinstance(modes, str):
+        modes = [modes]
+    elif not isinstance(modes, list):
+        raise AttributeError("Invalid Mode / Mode List")
+    for mode in modes:
+        try:
+            if conf.gr_modulations[protocol][hardware][mode].endswith('.py'):
+                full_cmd = ["python2", conf.gr_modulations[protocol]
+                            [hardware][mode]] + params
+            elif conf.gr_modulations[protocol][hardware][mode].endswith('.sh'):
+                full_cmd = ["./" + conf.gr_modulations[protocol]
+                            [hardware][mode]] + params
+            else:
+                full_cmd = [conf.gr_modulations[protocol]
+                            [hardware][mode]] + params
+            conf.gr_process = subprocess.Popen(
+                full_cmd,
+                env=env,
+                bufsize=1,
+                stdout=conf.gr_process_io["stdout"],
+                stderr=conf.gr_process_io["stderr"],
+                stdin=subprocess.PIPE,
+            )
+            return radio.wait_for_hardware()
+        except (OSError, KeyError):
+            return False
 
 
 def gnuradio_exit(c):
@@ -579,7 +589,7 @@ def initial_setup():
     conf.gr_modulations = {}
     conf.gr_protocol_options = {}
     conf.gr_process = None
-    conf.gr_mods_path = os.path.join(os.getcwd(), "util", ".scapy")
+    conf.gr_mods_path = os.path.join(os.getcwd(), "modulations")
     build_modulations_dict()
     if not os.path.exists(conf.gr_mods_path):
         os.makedirs(conf.gr_mods_path)
