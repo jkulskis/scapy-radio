@@ -147,6 +147,9 @@ class GnuradioSocket(SuperSocket):
     def recv(self, x=MTU):
         data, addr = self.ins.recvfrom(x)
         p = scapy.layers.gnuradio.GnuradioPacket(data)
+        # check if a valid gnuradio protocol, otherwise return the raw data
+        if p.fields['proto'] not in range(1, 6):
+            return Packet(data)
         return p
 
     def send(self, pkt):
@@ -163,11 +166,12 @@ class GnuradioSocket(SuperSocket):
 def parse_parameters(**kwargs):
     paramter_args = []
     for arg, v in kwargs.items():
-        if len(arg) == 1:  # using short ID
-            paramter_args.append("-{}".format(arg.replace("_", "-")))
-        else:  # if len(arg) > 1, then using the full ID
-            paramter_args.append("--{}".format(arg.replace("_", "-")))
-        paramter_args.append(str(v))
+        if v is not None:
+            if len(arg) == 1:  # using short ID
+                paramter_args.append("-{}".format(arg.replace("_", "-")))
+            else:  # if len(arg) > 1, then using the full ID
+                paramter_args.append("--{}".format(arg.replace("_", "-")))
+            paramter_args.append(str(v))
     return paramter_args
 
 
@@ -419,6 +423,15 @@ def update_protocol(protocol_path=None, env=None):
                         protocol=protocol, env=env)
 
 
+def update_custom_modulation(protocol, hardware, mode, mode_path):
+    if not protocol in conf.gr_modulations:
+        conf.gr_modulations[protocol] = {hardware: {mode: mode_path}}
+    elif hardware not in conf.gr_modulations[protocol]:
+        conf.gr_modulations[protocol][hardware] = {mode: mode_path}
+    else:
+        conf.gr_modulations[protocol][hardware][mode] = mode_path
+
+
 def build_modulations_dict(env=None):
     for protocol_path in [f.path for f in os.scandir(conf.gr_mods_path) if f.is_dir()]:
         update_protocol(protocol_path=protocol_path, env=env)
@@ -515,7 +528,7 @@ def gnuradio_start_graph(host="localhost", port=8080):
 
 @conf.commands.register
 def switch_radio_protocol(
-    protocol, radio=None, modes=None, env=None, params=[], *args, **kwargs
+    protocol, radio=None, modes=None, params=[], env=None, *args, **kwargs
 ):
     hardware = radio.hardware
     """Launches Gnuradio in background"""
@@ -528,15 +541,20 @@ def switch_radio_protocol(
         }
 
     if protocol not in conf.gr_modulations:
-        available_protocols = []
-        for protocol, hardwares in conf.gr_modulations.items():
-            if radio.hardware in hardwares.keys():
-                available_protocols.append(protocol)
-        print(
-            "Invalid protocol\nAvailable protocols for {}: {}\n".format(radio.hardware, ", ".join(
-                available_protocols))
-        )
-        raise AttributeError("Unknown radio protocol: {}".format(protocol))
+        # check to see if the casing was off
+        lower_keys = [key.lower() for key in conf.gr_modulations.keys()]
+        try:
+            protocol = list(conf.gr_modulations.keys())[lower_keys.index(protocol.lower())]
+        except ValueError:
+            available_protocols = []
+            for protocol, hardwares in conf.gr_modulations.items():
+                if radio.hardware in hardwares.keys():
+                    available_protocols.append(protocol)
+            print(
+                "Invalid protocol\nAvailable protocols for {}: {}\n".format(radio.hardware, ", ".join(
+                    available_protocols))
+            )
+            raise AttributeError("Unknown radio protocol: {}".format(protocol))
     if conf.gr_process is not None:
         # An instance is already running
         kill_process()
@@ -564,9 +582,23 @@ def switch_radio_protocol(
                 stderr=conf.gr_process_io["stderr"],
                 stdin=subprocess.PIPE,
             )
-            return radio.wait_for_hardware()
+            if conf.gr_modulations[protocol][hardware][mode].endswith('.py'):
+                # assume that a python file is a gnuradio compiled block file
+                return radio.wait_for_hardware()
+            else:
+                # for any other files, just wait 2 seconds to assume that the hardware is loaded up
+                # may change this in the future by adding custom wait strings for std-err / std-out
+                time.sleep(2)
+                return True
         except (OSError, KeyError):
             return False
+
+
+def output():
+    if not hasattr(conf, "gr_process_io") or conf.gr_process_io is None:
+        return None
+    else:
+        return conf.gr_process_io
 
 
 def gnuradio_exit(c):
