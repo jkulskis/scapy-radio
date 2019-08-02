@@ -27,10 +27,12 @@ import time
 
 
 class Radio:
-    def __init__(self, hardware=None, env=None):
+    def __init__(self, hardware=None, detect=True, env=None):
         # usrp, hackrf, etc.
         self.env = env
-        self.hardware = self.detect_hardware(hardware)
+        self.hardware = hardware.lower() if hardware else None
+        if detect:
+            self.detect_hardware()
         self.protocols = {}
         self.update_protocols()
 
@@ -44,23 +46,25 @@ class Radio:
             self.update_protocols()
 
     def protocol_modes(self, protocol):
+        protocol = protocol.lower()
         self.update_protocols()
         return list(self.protocols[protocol].keys())
 
-    def detect_hardware(self, hardware=None):
+    def detect_hardware(self):
         hardware_checks = [('usrp', 'uhd_find_devices'),
                            ('hackrf', 'hackrf_info')]
-        if hardware:  # if using a specific hardware, only try to detect the given hardware type
+        if self.hardware:  # if using a specific hardware, only try to detect the given hardware type
             supported = False
             for hardware_info in hardware_checks:
-                if hardware_info[0] == hardware:
+                if hardware_info[0] == self.hardware:
                     hardware_checks = [hardware_info]
                     supported = True
                     break
             if not supported:
                 print("Could not find supported hardware\n")
-                return None
-        print("Trying to find supported hardware: {}".format(
+                self.hardware = None
+                return self.hardware
+        print("\nTrying to find supported hardware: {}".format(
             ', '.join(hardware_info[0] for hardware_info in hardware_checks)))
         for hardware_info in hardware_checks:
             try:  # try to find a usrp first, since full duplex is optimal for testing
@@ -68,21 +72,23 @@ class Radio:
                     hardware_info[1], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, env=self.env)
                 if find_process == 0:
                     print("Using hardware: {}".format(hardware_info[0]))
-                    return hardware_info[0]
+                    self.hardware = hardware_info[0]
+                    return self.hardware
             except (FileNotFoundError, subprocess.CalledProcessError):
                 # if they don't have this hardware's drivers (FileNotFoundError) or one is not plugged in (returns exit code 1), just move on and try for the next hardware
                 pass
         print("Could not find supported hardware")
-        return None
+        self.hardware = None
+        return self.hardware
 
     def wait_for_hardware(self):
         if self.hardware == "usrp":
             # need to change to usrp specific string since press enter to quit takes time to load up
-            load_string = "Actually got clock rate 32.000000 MHz"
+            load_strings = ["Actually got clock rate"] * 2
             busy_string = "KeyError: No devices found for"
             sleep_time = 1.5
         elif self.hardware == "hackrf":
-            load_string = "Using HackRF"
+            load_strings = ["Using HackRF"]
             busy_string = "Resource busy"
             sleep_time = 0.5
         else:
@@ -95,12 +101,19 @@ class Radio:
             conf.gr_process_io["stderr"].seek(0)
             out = conf.gr_process_io["stderr"].read()
             if out:
-                if load_string in out:
-                    # wait the extra sleep time, since there is a small delay
-                    time.sleep(sleep_time)
-                    print("Loaded up {}".format(self.hardware))
-                    return True
-                elif busy_string in out:
+                for ii in range(len(load_strings)):
+                    if load_strings[ii] in out:
+                        if ii == len(load_strings) - 1:
+                            # wait the extra sleep time, since there is a small delay
+                            time.sleep(sleep_time)
+                            print("Loaded up {}".format(self.hardware))
+                            return True
+                        else:
+                            out = out[out.index(
+                                load_strings[ii]) + len(load_strings[ii]):]
+                    else:
+                        break
+                if busy_string in out:
                     print("{} is Busy".format(self.hardware))
                     return False
             if conf.gr_process.poll():  # check if the process exited before the hardware loaded up
@@ -108,6 +121,7 @@ class Radio:
                     self.hardware))
                 print("Gnuradio-err log:\n\n{0}".format(out))
                 return False
+        return True  # all the load strings were loaded up
 
 
 def find_all_hardware(env=None):
@@ -193,6 +207,29 @@ def get_packet_layers(packet):
         yield layer
         counter += 1
 
+def has_scan(protocol):
+    protocol = protocol.lower()
+    if protocol in conf.gr_modulations.keys():
+        for hardware, modes in conf.gr_modulations[protocol].items():
+            for mode in modes.keys():
+                if mode.startswith('rx'):
+                    return True
+
+def has_transmit(protocol):
+    protocol = protocol.lower()
+    if protocol in conf.gr_modulations.keys():
+        for hardware, modes in conf.gr_modulations[protocol].items():
+            for mode in modes.keys():
+                if mode.startswith('tx'):
+                    return True
+
+def available_actions(protocol):
+    actions = []
+    if has_scan(protocol):
+        actions.append('scan')
+    if has_transmit(protocol):
+        actions.append('transmit')
+    return actions
 
 def wait_for_hardware(hardware):
     if hardware == "usrp":
@@ -242,7 +279,7 @@ def srradio(
         if mode is None:
             return []
     else:
-        mode = switch_radio_protocol(protocol, radio=radio, env=env, mode=[
+        mode = switch_radio_protocol(protocol, radio=radio, env=env, modes=[
                                      "rf", "tx"], params=params)
         if mode is None:
             return []
@@ -290,21 +327,24 @@ def srradio(
 
 
 @conf.commands.register
-def srradio1(pkts, protocol=None, radio=None, env=None, params=[], *args, **kwargs):
-    """send and receive 1 packet using a Gnuradio socket"""
-    a, b = srradio(pkts, protocol=protocol, radio=radio,
-                   env=env, params=params, *args, **kwargs)
-    if len(a) > 0:
-        return a[0][1]
-
-
-@conf.commands.register
 def sniffradio(
-    protocol=None, radio=None, env=None, opened_socket=None, params=[], *args, **kwargs
+    protocol=None,
+    radio=None,
+    env=None,
+    opened_socket=None,
+    offline=None,
+    params=[],
+    *args,
+    **kwargs
 ):
     if protocol is not None:
         if not switch_radio_protocol(
-            protocol, radio=radio, env=env, modes="rx", params=params
+            protocol,
+            radio=radio,
+            env=env,
+            modes="rx",
+            params=params,
+            wait=True,
         ):
             return []
     s = opened_socket if opened_socket is not None else GnuradioSocket()
@@ -342,6 +382,7 @@ def build_protocol_mode(protocol=None, mode_path=None, hardware=None, env=None):
         base_dir_name = os.path.basename(os.path.dirname(mode_path))
     mode = base_dir_name[base_dir_name.index(
         "_") + 1:] if "_" in base_dir_name else base_dir_name
+    mode = mode.lower()  # for consistency
     file_names = os.listdir(mode_path)
     compiled_file_name = None
     grc_file_name = None
@@ -392,6 +433,8 @@ def build_protocol_mode(protocol=None, mode_path=None, hardware=None, env=None):
 
 
 def update_protocol_mode(protocol=None, mode_path=None, hardware=None, env=None):
+    protocol = protocol.lower()
+    hardware = hardware.lower()
     if protocol not in conf.gr_modulations:
         conf.gr_modulations[protocol] = {hardware: {}}
     elif hardware not in conf.gr_modulations[protocol]:
@@ -424,6 +467,9 @@ def update_protocol(protocol_path=None, env=None):
 
 
 def update_custom_modulation(protocol, hardware, mode, mode_path):
+    protocol = protocol.lower()
+    hardware = hardware.lower()
+    mode = mode.lower()
     if not protocol in conf.gr_modulations:
         conf.gr_modulations[protocol] = {hardware: {mode: mode_path}}
     elif hardware not in conf.gr_modulations[protocol]:
@@ -528,23 +574,35 @@ def gnuradio_start_graph(host="localhost", port=8080):
 
 @conf.commands.register
 def switch_radio_protocol(
-    protocol, radio=None, modes=None, params=[], env=None, *args, **kwargs
+    protocol,
+    radio=None,
+    modes=None,
+    params=[],
+    env=None,
+    wait=True,
+    *args,
+    **kwargs,
 ):
-    hardware = radio.hardware
+    protocol = protocol.lower()
+    if isinstance(modes, str):
+        modes = [modes.lower()]
+    elif isinstance(modes, list):
+        modes = [mode.lower() for mode in modes]
+    else:
+        raise AttributeError("Invalid Mode / Mode List")
     """Launches Gnuradio in background"""
     if not conf.gr_modulations:
         build_modulations_dict(env=env)
-    if not hasattr(conf, "gr_process_io") or conf.gr_process_io is None:
-        conf.gr_process_io = {
-            "stdout": open("/tmp/gnuradio.log", "w+"),
-            "stderr": open("/tmp/gnuradio-err.log", "w+"),
-        }
-
+    conf.gr_process_io = {
+        "stdout": open("/tmp/gnuradio.log", "w+"),
+        "stderr": open("/tmp/gnuradio-err.log", "w+"),
+    }
     if protocol not in conf.gr_modulations:
         # check to see if the casing was off
         lower_keys = [key.lower() for key in conf.gr_modulations.keys()]
         try:
-            protocol = list(conf.gr_modulations.keys())[lower_keys.index(protocol.lower())]
+            protocol = list(conf.gr_modulations.keys())[
+                lower_keys.index(protocol.lower())]
         except ValueError:
             available_protocols = []
             for protocol, hardwares in conf.gr_modulations.items():
@@ -559,21 +617,17 @@ def switch_radio_protocol(
         # An instance is already running
         kill_process()
         conf.gr_process = None
-    if isinstance(modes, str):
-        modes = [modes]
-    elif not isinstance(modes, list):
-        raise AttributeError("Invalid Mode / Mode List")
     for mode in modes:
         try:
-            if conf.gr_modulations[protocol][hardware][mode].endswith('.py'):
+            if conf.gr_modulations[protocol][radio.hardware][mode].endswith('.py'):
                 full_cmd = ["python2", conf.gr_modulations[protocol]
-                            [hardware][mode]] + params
-            elif conf.gr_modulations[protocol][hardware][mode].endswith('.sh'):
+                            [radio.hardware][mode]] + params
+            elif conf.gr_modulations[protocol][radio.hardware][mode].endswith('.sh'):
                 full_cmd = ["./" + conf.gr_modulations[protocol]
-                            [hardware][mode]] + params
+                            [radio.hardware][mode]] + params
             else:
                 full_cmd = [conf.gr_modulations[protocol]
-                            [hardware][mode]] + params
+                            [radio.hardware][mode]] + params
             conf.gr_process = subprocess.Popen(
                 full_cmd,
                 env=env,
@@ -582,13 +636,17 @@ def switch_radio_protocol(
                 stderr=conf.gr_process_io["stderr"],
                 stdin=subprocess.PIPE,
             )
-            if conf.gr_modulations[protocol][hardware][mode].endswith('.py'):
-                # assume that a python file is a gnuradio compiled block file
-                return radio.wait_for_hardware()
+            if wait:
+                if conf.gr_modulations[protocol][radio.hardware][mode].endswith('.py'):
+                    # assume that a python file is a gnuradio compiled block file
+                    return radio.wait_for_hardware()
+                else:
+                    # for any other files, just wait 3 seconds to assume that the hardware is loaded up
+                    # may change this in the future by adding custom wait strings for std-err / std-out
+                    time.sleep(3)
+                    return True
             else:
-                # for any other files, just wait 2 seconds to assume that the hardware is loaded up
-                # may change this in the future by adding custom wait strings for std-err / std-out
-                time.sleep(2)
+                print('Connected to {}'.format(radio.hardware))
                 return True
         except (OSError, KeyError):
             return False
