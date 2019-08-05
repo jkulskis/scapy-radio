@@ -214,6 +214,7 @@ def has_scan(protocol):
             for mode in modes.keys():
                 if mode.startswith('rx'):
                     return True
+    return False
 
 def has_transmit(protocol):
     protocol = protocol.lower()
@@ -222,6 +223,8 @@ def has_transmit(protocol):
             for mode in modes.keys():
                 if mode.startswith('tx'):
                     return True
+    return False
+
 
 def available_actions(protocol):
     actions = []
@@ -359,7 +362,7 @@ def sniffradio(
 
 @conf.commands.register
 def kill_process():
-    if not conf.gr_process.poll():  # check if the process is running
+    if conf.gr_process is not None and not conf.gr_process.poll():  # check if the process is running
         # send a newline to gracefully stop the gnruadio process before killing
         try:
             conf.gr_process.stdin.write("\r\n".encode())
