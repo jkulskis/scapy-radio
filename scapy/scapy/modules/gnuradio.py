@@ -24,6 +24,7 @@ import os
 import sys
 import subprocess
 import time
+import datetime
 
 
 class Radio:
@@ -207,6 +208,7 @@ def get_packet_layers(packet):
         yield layer
         counter += 1
 
+
 def has_scan(protocol):
     protocol = protocol.lower()
     if protocol in conf.gr_modulations.keys():
@@ -215,6 +217,7 @@ def has_scan(protocol):
                 if mode.startswith('rx'):
                     return True
     return False
+
 
 def has_transmit(protocol):
     protocol = protocol.lower()
@@ -233,6 +236,7 @@ def available_actions(protocol):
     if has_transmit(protocol):
         actions.append('transmit')
     return actions
+
 
 def wait_for_hardware(hardware):
     if hardware == "usrp":
@@ -261,67 +265,79 @@ def wait_for_hardware(hardware):
 @conf.commands.register
 def srradio(
     pkts,
+    channels=None,
     protocol=None,
     radio=None,
     listen=True,
     wait_times=0.25,
     env=None,
     preamble_fuzz=False,
-    params=[],
+    params={},
     prn=None,
     *args,
     **kwargs
 ):
     """send and receive using a Gnuradio socket"""
-    ch = get_parameter(short_id="c", long_id="channel", params=params)
-    print("\nSending on channel {}".format(ch))
-    rx_packets = []
+    rx_packets = {ch: [] for ch in channels}
     if preamble_fuzz:
         mode = switch_radio_protocol(protocol, radio=radio, env=env, modes=[
-                                     "rf_fuzz", "tx_fuzz"], params=params)
+            "rf_fuzz", "tx_fuzz"])
         if mode is None:
-            return []
+            return rx_packets
     else:
         mode = switch_radio_protocol(protocol, radio=radio, env=env, modes=[
-                                     "rf", "tx"], params=params)
+            "rf", "tx"])
         if mode is None:
-            return []
+            return rx_packets
+    gnuradio_set_vars(**params)
     s = GnuradioSocket()
-    number = 0
     pkt_strings = [str(pkt) for pkt in strip_gnuradio_layer(pkts)]
-    full_duplex = mode in ('rf', 'rf_fuzz')
-    if not isinstance(wait_times, list):  # either list, numeral, or None
-        wait_times = [wait_times] * len(pkts)
-    for ii in range(len(pkts)):
-        number += 1
-        s.send(pkts[ii])
-        if prn:
-            prn(pkts[ii], number, tx=True)
-        if wait_times[ii]:
-            print("Waiting {} seconds...".format(wait_times[ii]))
-            if full_duplex:
-                rv = sendrecv.sniff(opened_socket=s, timeout=wait_times[ii])
-                for r_pkt in rv:
-                    if (
-                        r_pkt is not None
-                        and str(strip_gnuradio_layer(r_pkt)) != pkt_strings[ii]
-                    ):
-                        if prn:
-                            prn(r_pkt)
-                        rx_packets.append(r_pkt)
-            else:
-                time.sleep(wait_times[ii])
+    full_duplex = bool(mode in ('rf', 'rf_fuzz'))
+    for ch in channels:
+        gnuradio_set_vars(channel=ch)
+        ch_start_time = time.time()
+        print("\nSending on channel {}".format(ch))
+        number = 0
+        if not isinstance(wait_times, list):  # either list, numeral, or None
+            wait_times = [wait_times] * len(pkts)
+        for ii in range(len(pkts)):
+            number += 1
+            s.send(pkts[ii])
+            if prn:
+                prn(pkts[ii], number, tx=True)
+            if wait_times[ii]:
+                print("Waiting {} seconds...".format(wait_times[ii]))
+                if full_duplex:
+                    rv = sendrecv.sniff(
+                        opened_socket=s, timeout=wait_times[ii])
+                    for r_pkt in rv:
+                        if (
+                            r_pkt is not None
+                            and str(strip_gnuradio_layer(r_pkt)) != pkt_strings[ii]
+                        ):
+                            if prn:
+                                prn(r_pkt)
+                            rx_packets[ch].append(r_pkt)
+                else:
+                    time.sleep(wait_times[ii])
+        print(
+            "Total Time for Channel {}: {}".format(
+                ch,
+                datetime.timedelta(seconds=round(
+                    (time.time() - ch_start_time), 4)),
+            )
+        )
     if full_duplex:
         print("Emptying socket of any responses...")
         rv = sendrecv.sniff(
-            opened_socket=s, timeout=3
+            opened_socket=s, timeout=2
         )  # wait 3 seconds to empty the socket
         for r_pkt in rv:
             if (
                 r_pkt is not None
                 and str(strip_gnuradio_layer(r_pkt)) not in pkt_strings
             ):
-                rx_packets.append(r_pkt)
+                rx_packets[ch].append(r_pkt)
     else:
         print("Closing socket...")
     s.close()
@@ -331,30 +347,43 @@ def srradio(
 
 @conf.commands.register
 def sniffradio(
+    channels=None,
     protocol=None,
     radio=None,
     env=None,
     opened_socket=None,
-    offline=None,
-    params=[],
+    offline_file=None,
+    params={},
     *args,
     **kwargs
 ):
-    if protocol is not None:
-        if not switch_radio_protocol(
-            protocol,
-            radio=radio,
-            env=env,
-            modes="rx",
-            params=params,
-            wait=True,
-        ):
-            return []
+    rx_packets = {ch: [] for ch in channels}
+    if not switch_radio_protocol(
+        protocol,
+        radio=radio,
+        env=env,
+        modes="rx",
+        wait=True,
+    ):
+        return rx_packets
     s = opened_socket if opened_socket is not None else GnuradioSocket()
-    ch = get_parameter(short_id="c", long_id="channel", params=params)
-    print("\nSniffing on channel {}".format(ch))
-    rv = sendrecv.sniff(opened_socket=s, *args, **kwargs)
-    if opened_socket is None:
+    gnuradio_set_vars(**params)
+    for ch in channels:
+        print("\nSniffing on channel {}".format(ch))
+        gnuradio_set_vars(channel=ch)
+        # while 1:
+        #     if offline_file:
+        #         if os.path.exists(offline_file):
+        #             with open(offline_file, 'rb') as f:
+        #                 if f.read():
+        #                     break
+        rv = sendrecv.sniff(
+            opened_socket=s,
+            offline=None,#offline_file,
+            *args,
+            **kwargs
+        )
+    if opened_socket is not None:
         s.close()
     kill_process()
     return rv
@@ -504,45 +533,47 @@ def strip_gnuradio_layer(packets):
 
 def sigint_ignore():
     import os
-
     os.setpgrp()
 
 
 @conf.commands.register
-def gnuradio_set_vars(host="localhost", port=8080, **kwargs):
+def gnuradio_set_vars(gr_host="localhost", gr_port=8080, **kwargs):
     try:
-        import xmlrpc
+        from xmlrpc.client import Server
+        from xmlrpc.client import Fault
     except ImportError:
-        print("xmlrpc is missing to use this function.")
+        print("xmlrpc is needed to call 'gnuradio_set_vars'")
     else:
-        s = xmlrpc.Server("http://%s:%d" % (host, port))
-        for k, v in kwargs.iteritems():
+        s = Server("http://{}:{}".format(gr_host, gr_port))
+        for k, v in kwargs.items():
             try:
-                getattr(s, "set_%s" % k)(v)
-            except xmlrpc.Fault:
-                print("Unknown variable '%s'" % k)
+                getattr(s, "set_{}".format(k))(v)
+            except Fault:
+                print("Unknown variable '{}'".format(k))
         s = None
 
 
 @conf.commands.register
 def gnuradio_get_vars(*args, **kwargs):
-    if "host" not in kwargs:
-        kwargs["host"] = "127.0.0.1"
-    if "port" not in kwargs:
-        kwargs["port"] = 8080
+    if "gr_host" not in kwargs:
+        kwargs["gr_host"] = "127.0.0.1"
+    if "gr_port" not in kwargs:
+        kwargs["gr_port"] = 8080
     rv = {}
     try:
-        import xmlrpc
+        from xmlrpc.client import Server
+        from xmlrpc.client import Fault
     except ImportError:
-        print("xmlrpc is missing to use this function.")
+        print("xmlrpc is needed to call 'gnuradio_get_vars'")
     else:
-        s = xmlrpc.Server("http://%s:%d" % (kwargs["host"], kwargs["port"]))
+        s = Server(
+            "http://{}:{}".format(kwargs["gr_host"], kwargs["gr_port"]))
         for v in args:
             try:
-                res = getattr(s, "get_%s" % v)()
+                res = getattr(s, "get_{}".format(v))()
                 rv[v] = res
-            except xmlrpc.Fault:
-                print("Unknown variable '%s'" % v)
+            except Fault:
+                print("Unknown variable '{}'".format(v))
         s = None
     if len(args) == 1:
         return rv[args[0]]
@@ -550,28 +581,30 @@ def gnuradio_get_vars(*args, **kwargs):
 
 
 @conf.commands.register
-def gnuradio_stop_graph(host="localhost", port=8080):
+def gnuradio_stop_graph(gr_host="localhost", gr_port=8080):
     try:
-        import xmlrpc
+        from xmlrpc.client import Server
+        from xmlrpc.client import Fault
     except ImportError:
-        print("xmlrpc is missing to use this function.")
+        print("xmlrpc is needed to call 'gnuradio_stop_graph'")
     else:
-        s = xmlrpc.Server("http://{host}:{port}".format(host=host, port=port))
+        s = Server("http://{host}:{port}".format(host=gr_host, port=gr_port))
         s.stop()
         s.wait()
 
 
 @conf.commands.register
-def gnuradio_start_graph(host="localhost", port=8080):
+def gnuradio_start_graph(gr_host="localhost", gr_port=8080):
     try:
-        import xmlrpc
+        from xmlrpc.client import Server
+        from xmlrpc.client import Fault
     except ImportError:
-        print("xmlrpclib is missing to use this function.")
+        print("xmlrpclib is needed to call 'gnuradio_start_graph'")
     else:
-        s = xmlrpc.Server("http://{host}:{port}".format(host=host, port=port))
+        s = Server("http://{host}:{port}".format(host=gr_host, port=gr_port))
         try:
             s.start()
-        except xmlrpc.Fault as e:
+        except Fault as e:
             print("ERROR: {}".format(e.faultString))
 
 
@@ -683,9 +716,9 @@ def initial_setup():
     conf.gr_protocol_options = {}
     conf.gr_process = None
     conf.gr_mods_path = os.path.join(os.getcwd(), "modulations")
-    build_modulations_dict()
     if not os.path.exists(conf.gr_mods_path):
         os.makedirs(conf.gr_mods_path)
+    build_modulations_dict()
 
 
 initial_setup()
