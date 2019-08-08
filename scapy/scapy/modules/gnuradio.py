@@ -52,8 +52,10 @@ class Radio:
         return list(self.protocols[protocol].keys())
 
     def detect_hardware(self):
-        hardware_checks = [('usrp', 'uhd_find_devices'),
-                           ('hackrf', 'hackrf_info')]
+        hardware_checks = [
+            ('usrp', 'uhd_find_devices'),
+            ('hackrf', 'hackrf_info')
+        ]
         if self.hardware:  # if using a specific hardware, only try to detect the given hardware type
             supported = False
             for hardware_info in hardware_checks:
@@ -280,13 +282,15 @@ def srradio(
     """send and receive using a Gnuradio socket"""
     rx_packets = {ch: [] for ch in channels}
     if preamble_fuzz:
-        mode = switch_radio_protocol(protocol, radio=radio, env=env, modes=[
-            "rf_fuzz", "tx_fuzz"])
+        mode = switch_radio_protocol(protocol.lower(), radio=radio, env=env, modes=[
+            "rf_fuzz", "tx_fuzz"]
+        )
         if mode is None:
             return rx_packets
     else:
-        mode = switch_radio_protocol(protocol, radio=radio, env=env, modes=[
-            "rf", "tx"])
+        mode = switch_radio_protocol(protocol.lower(), radio=radio, env=env, modes=[
+            "rf", "tx"]
+        )
         if mode is None:
             return rx_packets
     gnuradio_set_vars(**params)
@@ -359,7 +363,7 @@ def sniffradio(
 ):
     rx_packets = {ch: [] for ch in channels}
     if not switch_radio_protocol(
-        protocol,
+        protocol.lower(),
         radio=radio,
         env=env,
         modes="rx",
@@ -708,6 +712,10 @@ def gnuradio_exit(c):
 
 
 def initial_setup():
+    from pathlib import Path
+    conf.gr_mods_path = os.path.join(str(Path.home()), '.scapy-radio')
+    if not os.path.exists(conf.gr_mods_path):
+        os.makedirs(conf.gr_mods_path)
     atexit.register(gnuradio_exit, conf)
     conf.L2socket = GnuradioSocket
     conf.L3socket = GnuradioSocket
@@ -717,9 +725,6 @@ def initial_setup():
     conf.gr_modulations = {}
     conf.gr_protocol_options = {}
     conf.gr_process = None
-    conf.gr_mods_path = os.path.join(os.getcwd(), "modulations")
-    if not os.path.exists(conf.gr_mods_path):
-        os.makedirs(conf.gr_mods_path)
     build_modulations_dict()
 
 
