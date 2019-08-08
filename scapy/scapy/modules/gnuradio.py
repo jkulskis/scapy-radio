@@ -293,10 +293,11 @@ def srradio(
         )
         if mode is None:
             return rx_packets
-    gnuradio_set_vars(**params)
     s = GnuradioSocket()
+    gnuradio_set_vars(**params)
     pkt_strings = [str(pkt) for pkt in strip_gnuradio_layer(pkts)]
     full_duplex = bool(mode in ('rf', 'rf_fuzz'))
+    print(channels)
     for ch in channels:
         gnuradio_set_vars(channel=ch)
         ch_start_time = time.time()
@@ -690,8 +691,11 @@ def switch_radio_protocol(
             else:
                 print('Connected to {}'.format(radio.hardware))
                 return True
-        except (OSError, KeyError):
+        except OSError:
             return False
+        except KeyError: # mode doesn't exist for this hardware
+            pass
+    return False
 
 
 def output():
