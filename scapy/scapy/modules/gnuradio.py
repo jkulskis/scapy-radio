@@ -379,7 +379,7 @@ def sniffradio(
         #                     break
         rv = sendrecv.sniff(
             opened_socket=s,
-            offline=None,#offline_file,
+            offline=None,  # offline_file,
             *args,
             **kwargs
         )
@@ -421,7 +421,8 @@ def build_protocol_mode(protocol=None, mode_path=None, hardware=None, env=None):
     for file_name in file_names:
         if file_name.endswith('.py'):
             # assume that if there is a python file, it is the compiled block file
-            compiled_file_name = file_name
+            # if there is a top_block file, take that every time
+            compiled_file_name = file_name if compiled_file_name != 'top_block.py' else compiled_file_name
         elif file_name.endswith('.grc'):
             # assume that there is only one grc file in the mode_path dir
             grc_file_name = file_name
@@ -450,6 +451,7 @@ def build_protocol_mode(protocol=None, mode_path=None, hardware=None, env=None):
                 if file_name.endswith('.py'):
                     # assume that if there is a python file, it is the compiled block file
                     compiled_file_name = file_name
+                    compiled_file_name = file_name if compiled_file_name != 'top_block.py' else compiled_file_name
                     break
             assert compiled_file_name is not None
             conf.gr_modulations[hardware][protocol][mode] = os.path.join(
