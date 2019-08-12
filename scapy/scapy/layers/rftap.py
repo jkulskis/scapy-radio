@@ -4,7 +4,7 @@
 # This program is published under a GPLv2 license
 
 """
-RFT (RFtap RF Protocol).
+RFTap (RFtap RF Protocol).
 """
 
 from scapy.layers.dot11 import Dot11
@@ -27,7 +27,7 @@ class RFtap(Packet):
             lambda pkt: (pkt.flags and pkt.flags.dlt),
         ),
         ConditionalField(
-            IEEEFloatField("freq", 0),
+            IEEEDoubleField("freq", 0),
             lambda pkt: (pkt.flags and pkt.flags.freq),
         ),
         ConditionalField(
