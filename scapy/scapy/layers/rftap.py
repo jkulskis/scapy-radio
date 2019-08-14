@@ -12,7 +12,7 @@ from scapy.layers.dot15d4 import Dot15d4, Dot15d4FCS
 from scapy.packet import Packet, bind_layers
 from scapy.fields import *
 from scapy.utils import lhex
-    
+
 class LE_IEEEFloatField(IEEEFloatField):
     def __init__(self, name, default, fmt="<f"):
         Field.__init__(self, name, default, fmt)
@@ -29,7 +29,7 @@ class LE_XBitField(XBitField):
         self.size = abs(size)
 
 class RFtap(Packet):
-    name = "RFtap Protocol"
+    name = "rftap"
     fields_desc = [
         LE_XBitField("magic", "RFta", 32),
         LE_XBitField("length32", 0, 16),
