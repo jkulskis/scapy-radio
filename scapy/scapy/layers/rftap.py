@@ -11,31 +11,46 @@ from scapy.layers.dot11 import Dot11
 from scapy.layers.dot15d4 import Dot15d4, Dot15d4FCS
 from scapy.packet import Packet, bind_layers
 from scapy.fields import *
+from scapy.utils import lhex
+    
+class LE_IEEEFloatField(IEEEFloatField):
+    def __init__(self, name, default, fmt="<f"):
+        Field.__init__(self, name, default, fmt)
 
+
+class LE_IEEEDoubleField(IEEEDoubleField):
+    def __init__(self, name, default, fmt="<d"):
+        Field.__init__(self, name, default, fmt)
+
+class LE_XBitField(XBitField):
+    def __init__(self, name, default, size, fmt="<"):
+        Field.__init__(self, name, default, fmt)
+        self.rev = size < 0
+        self.size = abs(size)
 
 class RFtap(Packet):
     name = "RFtap Protocol"
     fields_desc = [
-        BitField("magic", 0, 32),
-        #Field("magic", "RFta", "<4sHH"),
-        BitField("length32", 0, 16),
-        FlagsField("flags", 0, 16, ["dlt", "freq", "nomfreq", "freqofs", "isdbm", "power",
-                                    "noise", "snr", "qual", "isunixtime", "time", "duration", "location",
-                                    "reserved1", "reserved2", "reserved3"]),
+        LE_XBitField("magic", "RFta", 32),
+        LE_XBitField("length32", 0, 16),
+        FlagsField("flags", 0, 16, ["qual", "isunixtime", "time", "duration", "location",
+                                    "reserved1", "reserved2", "reserved3", "dlt", "freq", 
+                                    "nomfreq", "freqofs", "isdbm", "power",
+                                    "noise", "snr"]),
         ConditionalField(
             LEIntField("dlt", 0),
             lambda pkt: (pkt.flags and pkt.flags.dlt),
         ),
         ConditionalField(
-            IEEEDoubleField("freq", 0),
+            LE_IEEEDoubleField("freq", 0),
             lambda pkt: (pkt.flags and pkt.flags.freq),
         ),
         ConditionalField(
-            IEEEDoubleField("nomfreq", 0),
+            LE_IEEEDoubleField("nomfreq", 0),
             lambda pkt: (pkt.flags and pkt.flags.nomfreq),
         ),
         ConditionalField(
-            IEEEDoubleField("freqofs", 0),
+            LE_IEEEDoubleField("freqofs", 0),
             lambda pkt: (pkt.flags and pkt.flags.freqofs),
         ),
         ConditionalField(
@@ -43,19 +58,19 @@ class RFtap(Packet):
             lambda pkt: (pkt.flags and pkt.flags.isdbm),
         ),
         ConditionalField(
-            IEEEFloatField("power", 0),
+            LE_IEEEFloatField("power", 0),
             lambda pkt: (pkt.flags and pkt.flags.power),
         ),
         ConditionalField(
-            IEEEFloatField("noise", 0),
+            LE_IEEEFloatField("noise", 0),
             lambda pkt: (pkt.flags and pkt.flags.noise),
         ),
         ConditionalField(
-            IEEEFloatField("snr", 0),
+            LE_IEEEFloatField("snr", 0),
             lambda pkt: (pkt.flags and pkt.flags.snr),
         ),
         ConditionalField(
-            IEEEFloatField("qual", 0),
+            LE_IEEEFloatField("qual", 0),
             lambda pkt: (pkt.flags and pkt.flags.qual),
         ),
         ConditionalField(
@@ -63,27 +78,27 @@ class RFtap(Packet):
             lambda pkt: (pkt.flags and pkt.flags.isunixtime),
         ),
         ConditionalField(
-            IEEEDoubleField("timeint", 0),
+            LE_IEEEDoubleField("timeint", 0),
             lambda pkt: (pkt.flags and pkt.flags.time),
         ),
         ConditionalField(
-            IEEEDoubleField("timefrac", 0),
+            LE_IEEEDoubleField("timefrac", 0),
             lambda pkt: (pkt.flags and pkt.flags.time),
         ),
         ConditionalField(
-            IEEEDoubleField("duration", 0),
+            LE_IEEEDoubleField("duration", 0),
             lambda pkt: (pkt.flags and pkt.flags.duration),
         ),
         ConditionalField(
-            IEEEDoubleField("lat", 0),
+            LE_IEEEDoubleField("lat", 0),
             lambda pkt: (pkt.flags and pkt.flags.location),
         ),
         ConditionalField(
-            IEEEDoubleField("lon", 0),
+            LE_IEEEDoubleField("lon", 0),
             lambda pkt: (pkt.flags and pkt.flags.location),
         ),
         ConditionalField(
-            IEEEDoubleField("alt", 0),
+            LE_IEEEDoubleField("alt", 0),
             lambda pkt: (pkt.flags and pkt.flags.location),
         ),
     ]

@@ -28,9 +28,14 @@ import datetime
 
 
 class Radio:
+
+    FULL_DUPLEX = ['usrp', 'pluto']
+
     def __init__(self, hardware=None, detect=True, env=None):
         # usrp, hackrf, etc.
         self.env = env
+        # full_duplex detected in self.detect_hardware if no hardware is given
+        self.full_duplex = hardware in self.FULL_DUPLEX if hardware else None
         self.hardware = hardware.lower() if hardware else None
         if detect:
             self.detect_hardware()
@@ -76,6 +81,7 @@ class Radio:
                 if find_process == 0:
                     print("Using hardware: {}".format(hardware_info[0]))
                     self.hardware = hardware_info[0]
+                    self.full_duplex = self.hardware in self.FULL_DUPLEX
                     return self.hardware
             except (FileNotFoundError, subprocess.CalledProcessError):
                 # if they don't have this hardware's drivers (FileNotFoundError) or one is not plugged in (returns exit code 1), just move on and try for the next hardware
@@ -296,8 +302,6 @@ def srradio(
     s = GnuradioSocket()
     gnuradio_set_vars(**params)
     pkt_strings = [str(pkt) for pkt in strip_gnuradio_layer(pkts)]
-    full_duplex = bool(mode in ('rf', 'rf_fuzz'))
-    print(channels)
     for ch in channels:
         gnuradio_set_vars(channel=ch)
         ch_start_time = time.time()
@@ -312,9 +316,11 @@ def srradio(
                 prn(pkts[ii], number, tx=True)
             if wait_times[ii]:
                 print("Waiting {} seconds...".format(wait_times[ii]))
-                if full_duplex:
+                if radio.full_duplex:
                     rv = sendrecv.sniff(
-                        opened_socket=s, timeout=wait_times[ii])
+                        opened_socket=s, 
+                        timeout=wait_times[ii]
+                    )
                     for r_pkt in rv:
                         if (
                             r_pkt is not None
@@ -329,10 +335,11 @@ def srradio(
             "Total Time for Channel {}: {}".format(
                 ch,
                 datetime.timedelta(seconds=round(
-                    (time.time() - ch_start_time), 4)),
+                    (time.time() - ch_start_time), 4)
+                ),
             )
         )
-    if full_duplex:
+    if radio.full_duplex:
         print("Emptying socket of any responses...")
         rv = sendrecv.sniff(
             opened_socket=s, timeout=2
