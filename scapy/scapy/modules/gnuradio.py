@@ -14,7 +14,7 @@ from scapy.packet import *
 from scapy.fields import *
 from scapy.supersocket import SuperSocket
 from scapy import sendrecv
-from scapy import main
+from scapy import main  
 from appdirs import user_data_dir
 import socket
 import struct
@@ -318,7 +318,7 @@ def srradio(
                 print("Waiting {} seconds...".format(wait_times[ii]))
                 if radio.full_duplex:
                     rv = sendrecv.sniff(
-                        opened_socket=s, 
+                        opened_socket=s,
                         timeout=wait_times[ii]
                     )
                     for r_pkt in rv:
@@ -700,7 +700,7 @@ def switch_radio_protocol(
                 return True
         except OSError:
             return False
-        except KeyError: # mode doesn't exist for this hardware
+        except KeyError:  # mode doesn't exist for this hardware
             pass
     return False
 
