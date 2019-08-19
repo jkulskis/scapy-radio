@@ -13,7 +13,7 @@ from scapy.layers.dot15d4 import *
 from scapy.packet import *
 from scapy.fields import *
 #from scapy.layers.wmbus import *
-#from scapy.layers.ZWave import *
+from scapy.layers.ZWave import *
 
 
 class GnuradioPacket(Packet):
@@ -25,10 +25,10 @@ class GnuradioPacket(Packet):
     ]
 
 
-## Z-Wave
-# bind_bottom_up(GnuradioPacket, ZWave, proto=1)
-# bind_top_down(GnuradioPacket, ZWaveReq, proto=1)
-# bind_top_down(GnuradioPacket, ZWaveAck, proto=1)
+# Z-Wave
+bind_bottom_up(GnuradioPacket, ZWave, proto=1)
+bind_top_down(GnuradioPacket, ZWaveReq, proto=1)
+bind_top_down(GnuradioPacket, ZWaveAck, proto=1)
 
 ## ZigBee
 bind_layers(GnuradioPacket, Dot15d4FCS, proto=2)
