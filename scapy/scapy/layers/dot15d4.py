@@ -224,11 +224,14 @@ class Dot15d4Data(Packet):
         # https://github.com/wireshark/wireshark/blob/93c60b3b7c801dddd11d8c7f2a0ea4b7d02d700a/epan/dissectors/packet-ieee802154.c#L2061  # noqa: E501
         # it's too magic to me
         from scapy.layers.sixlowpan import SixLoWPAN
-        from scapy.layers.zigbee import ZigbeeNWK
+        from scapy.layers.zigbee import ZigbeeNWK, ZigbeeNWKStub
         if conf.dot15d4_protocol == "sixlowpan":
             return SixLoWPAN
         elif conf.dot15d4_protocol == "zigbee":
-            return ZigbeeNWK
+            if payload[0] & 0x01 and payload[0] & 0x02:  # Inter-PAN Frametype
+                return ZigbeeNWKStub
+            else:
+                return Packet.guess_payload_class(self, payload)
         else:
             if conf.dot15d4_protocol is None:
                 _msg = "Please set conf.dot15d4_protocol to select a " + \
@@ -438,12 +441,15 @@ class Dot15d4CmdGTSReq(Packet):
 # PAN ID conflict notification command frame is not necessary, only Dot15d4Cmd with cmd_id = 5 ("PANIDConflictNotify")  # noqa: E501
 # Orphan notification command not necessary, only Dot15d4Cmd with cmd_id = 6 ("OrphanNotify")  # noqa: E501
 
-# Bindings #
-bind_layers(Dot15d4, Dot15d4Beacon, fcf_frametype=0)
-bind_layers(Dot15d4, Dot15d4Data, fcf_frametype=1)
-bind_layers(Dot15d4, Dot15d4Ack, fcf_frametype=2)
-bind_layers(Dot15d4, Dot15d4Cmd, fcf_frametype=3)
-
+### Bindings ###
+bind_layers( Dot15d4, Dot15d4Beacon, fcf_frametype=0)
+bind_layers( Dot15d4, Dot15d4Data, fcf_frametype=1)
+bind_layers( Dot15d4, Dot15d4Ack,  fcf_frametype=2)
+bind_layers( Dot15d4, Dot15d4Cmd,  fcf_frametype=3)
+bind_layers( Dot15d4FCS, Dot15d4Beacon, fcf_frametype=0)
+bind_layers( Dot15d4FCS, Dot15d4Data, fcf_frametype=1)
+bind_layers( Dot15d4FCS, Dot15d4Ack,  fcf_frametype=2)
+bind_layers( Dot15d4FCS, Dot15d4Cmd,  fcf_frametype=3)
 # DLT Types #
 conf.l2types.register(DLT_IEEE802_15_4_WITHFCS, Dot15d4FCS)
 conf.l2types.register(DLT_IEEE802_15_4_NOFCS, Dot15d4)

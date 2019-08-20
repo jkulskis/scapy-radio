@@ -313,7 +313,7 @@ def srradio(
             number += 1
             s.send(pkts[ii])
             if prn:
-                prn(pkts[ii], number, tx=True)
+                prn(pkts[ii], number=number, channel=ch, tx=True)
             if wait_times[ii]:
                 print("Waiting {} seconds...".format(wait_times[ii]))
                 if radio.full_duplex:
@@ -327,18 +327,18 @@ def srradio(
                             and str(strip_gnuradio_layer(r_pkt)) != pkt_strings[ii]
                         ):
                             if prn:
-                                prn(r_pkt)
+                                prn(r_pkt, channel=ch)
                             rx_packets[ch].append(r_pkt)
                 else:
                     time.sleep(wait_times[ii])
-        print(
-            "Total Time for Channel {}: {}".format(
-                ch,
-                datetime.timedelta(seconds=round(
-                    (time.time() - ch_start_time), 4)
-                ),
-            )
+    print(
+        "Total Time for Channel {}: {}".format(
+            ch,
+            datetime.timedelta(seconds=round(
+                (time.time() - ch_start_time), 4)
+            ),
         )
+    )
     if radio.full_duplex:
         print("Emptying socket of any responses...")
         rv = sendrecv.sniff(

@@ -21,7 +21,7 @@ from scapy.fields import BitField, ByteField, XLEIntField, ConditionalField, \
     StrLenField, XLEShortField, XStrField, XBitField, XShortField
 
 from scapy.layers.dot15d4 import dot15d4AddressField, Dot15d4Beacon, Dot15d4, \
-    Dot15d4FCS
+    Dot15d4FCS, Dot15d4Data
 from scapy.layers.inet import UDP
 from scapy.layers.ntp import TimeStampField
 
@@ -137,6 +137,26 @@ _zcl_command_frames = {
     0x0c: "discover_attributes",
     0x0d: "discover_attributes_response",
     # 0x0e - 0xff Reserved
+}
+
+# ZigBee LightLink Command Frames
+_zll_command_frames = {
+    0x00: "scan_request",
+    0x01: "scan_response",
+    0x02: "device_information_request",
+    0x03: "device_information_response",
+    0x06: "identify_request",
+    0x07: "reset_to_factory_new_request",
+    0x10: "network_start_request",
+    0x11: "network_start_response",
+    0x12: "network_join_router_request",
+    0x13: "network_join_router_response",
+    0x14: "network_join_end_device_request",
+    0x15: "network_join_end_device_response",
+    0x16: "network_update_request",
+    0x40: "endpoint_information",
+    0x41: "get_group_identifiers_request",
+    0x42: "get_endpoint_list_request",
 }
 
 # ZigBee Cluster Library, Table 2.16 Enumerated Status Values
@@ -714,24 +734,33 @@ class ZigbeeNWKStub(Packet):
 class ZigbeeAppDataPayloadStub(Packet):
     name = "Zigbee Application Layer Data Payload for Inter-PAN Transmission"
     fields_desc = [
-        FlagsField("frame_control", 0, 4, ['reserved1', 'security', 'ack_req', 'extended_hdr']),  # noqa: E501
-        BitEnumField("delivery_mode", 0, 2, {0: 'unicast', 2: 'broadcast', 3: 'group'}),  # noqa: E501
+        FlagsField("frame_control", 0, 4, [
+                   'reserved1', 'security', 'ack_req', 'extended_hdr']),
+        BitEnumField("delivery_mode", 0, 2, {
+                     0: 'unicast', 2: 'broadcast', 3: 'group'}),
         BitField("frametype", 3, 2),  # value 0b11 (3) is a reserved frame type
-        # Group Address present only when delivery mode field has a value of 0b11 (group delivery mode)  # noqa: E501
+        # Group Address present only when delivery mode field has a value of 0b11 (group delivery mode)
         ConditionalField(
             XLEShortField("group_addr", 0x0),  # 16-bit identifier of the group
             lambda pkt: pkt.getfieldval("delivery_mode") == 0b11
         ),
         # Cluster identifier
-        EnumField("cluster", 0, _zcl_cluster_identifier, fmt="<H"),  # unsigned short (little-endian)  # noqa: E501
+        EnumField("cluster", 0, _zcl_cluster_identifier,
+                  fmt="<H"),  # unsigned short (little-endian)
         # Profile identifier
         EnumField("profile", 0, _zcl_profile_identifier, fmt="<H"),
         # ZigBee Payload
-        ConditionalField(
-            StrField("data", ""),
-            lambda pkt: pkt.frametype == 3
-        ),
+        #        ConditionalField(
+        #            ZigbeePayloadField("data", "", length_from=lambda pkt, s:len(s)),
+        #            lambda pkt:pkt.frametype == 3
+        #        ),
     ]
+
+    def guess_payload_class(self, payload):
+        if self.frametype == 3 and self.profile == 0xc05e and self.cluster == 0x1000:
+            return ZigbeeZLLCommissioningCluster
+        else:
+            return Packet.guess_payload_class(self, payload)
 
 # ZigBee Cluster Library #
 
@@ -993,14 +1022,18 @@ class ZEP1(ZEP2):
     ]
 
 ##### Added to work with Z3Sec #####
+
+
 class ZigbeeZLLCommissioningCluster(Packet):
     name = "Zigbee LightLink Commissioning Cluster Frame"
     fields_desc = [
         # Frame control (8 bits)
         BitField("reserved", 0, 3),
-        BitField("disable_default_response", 1, 1), # 1 not default response command will be returned
+        # 1 not default response command will be returned
+        BitField("disable_default_response", 1, 1),
         BitEnumField("direction", 0, 1, ['client2server', 'server2client']),
-        BitField("manufacturer_specific", 0, 1), # 0 manufacturer code shall not be included in the ZCL frame
+        # 0 manufacturer code shall not be included in the ZCL frame
+        BitField("manufacturer_specific", 0, 1),
         # Frame Type
         # 0b00 command acts across the entire profile
         # 0b01 command is specific to a cluster
@@ -1008,8 +1041,9 @@ class ZigbeeZLLCommissioningCluster(Packet):
         BitField("zcl_frametype", 1, 2),
         # Manufacturer code (0/16 bits) only present then manufacturer_specific field is set to 1
         ConditionalField(XLEShortField("manufacturer_code", 0x0),
-            lambda pkt:pkt.getfieldval("manufacturer_specific") == 1
-        ),
+                         lambda pkt:pkt.getfieldval(
+                             "manufacturer_specific") == 1
+                         ),
         # Transaction sequence number (8 bits)
         ByteField("transaction_sequence", 0),
         # Command identifier (8 bits): the cluster command
@@ -1017,25 +1051,27 @@ class ZigbeeZLLCommissioningCluster(Packet):
     ]
 
     def guess_payload_class(self, payload):
-        if self.command_identifier == 0x00:# and pkt.cluster == 0x1000:
+        if self.command_identifier == 0x00:  # and pkt.cluster == 0x1000:
             return ZLLScanRequest
-        elif self.command_identifier == 0x01:# and pkt.cluster == 0x1000:
+        elif self.command_identifier == 0x01:  # and pkt.cluster == 0x1000:
             return ZLLScanResponse
         else:
             return Packet.guess_payload_class(self, payload)
+
 
 class ZLLScanRequest(Packet):
     name = "ZLL: Scan Request"
     fields_desc = [
         # Inter-PAN transaction identifier (4 octets)
-        XLEIntField("inter_pan_transaction_id", 0x66666666), # Unsigned 32-bit Integer (4 octets)
-	# ZigBee information (1 octet)
+        # Unsigned 32-bit Integer (4 octets)
+        XLEIntField("inter_pan_transaction_id", 0x66666666),
+        # ZigBee information (1 octet)
         BitField("reserved", 0, 5),
         BitEnumField("rx_on_when_idle", 1, 1, [False, True]),
         BitEnumField("logical_type", 1, 2, {
-            0:"coordinator", 1:"router", 2:"end device", 3:"reserved"}
+            0: "coordinator", 1: "router", 2: "end device", 3: "reserved"}
         ),
-	# ZLL information (1 octet)
+        # ZLL information (1 octet)
         #FlagsField("ZLL information", 0, 8, [ 'factory_new', 'address_assignment', 'reserved1', 'reserved2', 'link_initiator', 'undefined', 'reserved3', 'reserved4' ]),
         BitField("reserved1", 0, 2),
         BitField("undefined", 0, 1),
@@ -1044,6 +1080,7 @@ class ZLLScanRequest(Packet):
         BitEnumField("address_assignment", 0, 1, [False, True]),
         BitEnumField("factory_new", 0, 1, [False, True]),
     ]
+
     def answers(self, other):
         if isinstance(other, ZLLScanResponse):
             return self.inter_pan_transaction_id == other.inter_pan_transaction_id
@@ -1055,15 +1092,15 @@ class ZLLScanResponse(Packet):
     fields_desc = [
         # Inter-PAN transaction identifier (4 octets)
         XLEIntField("inter_pan_transaction_id", 0x66666666),
-        ByteField("rssi_correction", 0x00), # range 0x00 - 0x20 (1 octet)
-	# ZigBee information (1 octet)
+        ByteField("rssi_correction", 0x00),  # range 0x00 - 0x20 (1 octet)
+        # ZigBee information (1 octet)
         # HiddenField(BitField("reserved", 0, 5)),
         BitField("reserved", 0, 5),
         BitEnumField("rx_on_when_idle", 1, 1, [False, True]),
         BitEnumField("logical_type", 1, 2, {
-            0:"coordinator", 1:"router", 2:"end device", 3:"reserved"}
+            0: "coordinator", 1: "router", 2: "end device", 3: "reserved"}
         ),
-	# ZLL information (1 octet)
+        # ZLL information (1 octet)
         # HiddenField(BitField("reserved1", 0, 2)),
         BitField("reserved1", 0, 2),
         BitEnumField("touchlink_priority_request", 0, 1, [False, True]),
@@ -1074,11 +1111,11 @@ class ZLLScanResponse(Packet):
         BitEnumField("factory_new", 0, 1, [False, True]),
         # Key bitmask (2 octets)
         FlagsField("key_bitmask", 0, 16, ["reserved_key_8", "reserved_key_9",
-            "reserved_key_10", "reserved_key_11", "reserved_key_12",
-            "reserved_key_13", "reserved_key_14", "certification_key",
-            "development_key", "reserved_key_1", "reserved_key_2", "reserved_key_3",
-            "master_key", "reserved_key_5", "reserved_key_6",
-            "reserved_key_7"]),
+                                          "reserved_key_10", "reserved_key_11", "reserved_key_12",
+                                          "reserved_key_13", "reserved_key_14", "certification_key",
+                                          "development_key", "reserved_key_1", "reserved_key_2", "reserved_key_3",
+                                          "master_key", "reserved_key_5", "reserved_key_6",
+                                          "reserved_key_7"]),
         # BitField("reserved3", 0, 3),
         # BitEnumField("master_key", 0, 1, [False, True]),
         # BitField("reserved4", 0, 3),
@@ -1090,7 +1127,7 @@ class ZLLScanResponse(Packet):
         # Response identifier (4 octets)
         XLEIntField("response_id", 0x66666666),
         # Extended PAN identifier (8 octets)
-        dot15d4AddressField("pan_id_ext", 0, adjust=lambda pkt,x: 8),
+        dot15d4AddressField("pan_id_ext", 0, adjust=lambda pkt, x: 8),
         # Network update identifier (1 octet)
         ByteField("network_update_id", 0),
         # Logical channel (1 octet)
@@ -1104,28 +1141,36 @@ class ZLLScanResponse(Packet):
         # Total group identifiers (1 octet)
         ByteField("number_of_group_ids", 0),
         # Endpoint identifier (0/1 octets)
-        ConditionalField(ByteField("endpoint_id", 0x00), lambda pkt:(pkt.getfieldval("number_of_sub_devices") == 1)),
+        ConditionalField(ByteField("endpoint_id", 0x00), lambda pkt:(
+            pkt.getfieldval("number_of_sub_devices") == 1)),
         # Profile identifier (0/2 octets)
-        #ConditionalField(XShortField("profile_id", 0x0000)
-        ConditionalField(EnumField("profile_id", 0, _zcl_profile_identifier, fmt = "<H"), lambda pkt:(pkt.getfieldval("number_of_sub_devices") == 1)),
+        # ConditionalField(XShortField("profile_id", 0x0000)
+        ConditionalField(EnumField("profile_id", 0, _zcl_profile_identifier, fmt="<H"), lambda pkt:(
+            pkt.getfieldval("number_of_sub_devices") == 1)),
         # Device identifier (0/2 octets)
-        ConditionalField(XShortField("device_id", 0x0000), lambda pkt:(pkt.getfieldval("number_of_sub_devices") == 1)),
+        ConditionalField(XShortField("device_id", 0x0000), lambda pkt:(
+            pkt.getfieldval("number_of_sub_devices") == 1)),
         # Version (0/1 octets)
         # HiddenField(ConditionalField(BitField("0x0", 0, 4), lambda pkt:(pkt.getfieldval("number_of_sub_devices") == 1))),
-        ConditionalField(BitField("0x0", 0, 4), lambda pkt:(pkt.getfieldval("number_of_sub_devices") == 1)),
-        ConditionalField(BitField("application_device_version", 2, 4), lambda pkt:(pkt.getfieldval("number_of_sub_devices") == 1)),
+        ConditionalField(BitField("0x0", 0, 4), lambda pkt:(
+            pkt.getfieldval("number_of_sub_devices") == 1)),
+        ConditionalField(BitField("application_device_version", 2, 4), lambda pkt:(
+            pkt.getfieldval("number_of_sub_devices") == 1)),
         # Group identifier count (0/1 octets)
-        ConditionalField(ByteField("group_id_count", 0x00), lambda pkt:(pkt.getfieldval("number_of_sub_devices") == 1)),
+        ConditionalField(ByteField("group_id_count", 0x00), lambda pkt:(
+            pkt.getfieldval("number_of_sub_devices") == 1)),
     ]
+
 
 class ZLLDeviceInformationRequest(Packet):
     name = "ZLL: Device Information Request"
     fields_desc = [
         # Inter-PAN transaction identifier (4 octets)
         XLEIntField("inter_pan_transaction_id", 0x66666666),
-	# Start index of device table (1 octet)
+        # Start index of device table (1 octet)
         ByteField("start_index", 0),
     ]
+
 
 class ZLLIdentifyRequest(Packet):
     name = "ZLL: Identify Request"
@@ -1139,6 +1184,7 @@ class ZLLIdentifyRequest(Packet):
         XLEShortField("identify_duration", 0xffff),
     ]
 
+
 class ZLLResetToFactoryNewRequest(Packet):
     name = "ZLL: Reset to Factory New Request"
     fields_desc = [
@@ -1146,13 +1192,14 @@ class ZLLResetToFactoryNewRequest(Packet):
         XLEIntField("inter_pan_transaction_id", 0x66666666),
     ]
 
+
 class ZLLNetworkStartRequest(Packet):
     name = "ZLL: Network Start Request"
     fields_desc = [
         # Inter-PAN transaction identifier (4 octets)
         XLEIntField("inter_pan_transaction_id", 0x66666666),
         # Extended PAN identifier (8 octets)
-        dot15d4AddressField("pan_id_ext", 0, adjust=lambda pkt,x: 8),
+        dot15d4AddressField("pan_id_ext", 0, adjust=lambda pkt, x: 8),
         # Key index (1 octets)
         ByteField("key_index", 4),  # default: Master key
         # Encrypted network key (16 octets)
@@ -1181,6 +1228,7 @@ class ZLLNetworkStartRequest(Packet):
         XLEShortField("initiator_network_address", 0),
     ]
 
+
 class ZLLNetworkStartResponse(Packet):
     name = "ZLL: Network Start Response"
     fields_desc = [
@@ -1188,15 +1236,15 @@ class ZLLNetworkStartResponse(Packet):
         XLEIntField("inter_pan_transaction_id", 0x66666666),
         # Status (1 octet)
         ByteEnumField("status", 0, {0: "success", 1: "failure",
-            2: "reserved_status_2", 3: "reserved_status_3",
-            4: "reserved_status_4", 5: "reserved_status_5",
-            6: "reserved_status_6", 7: "reserved_status_7",
-            8: "reserved_status_8", 9: "reserved_status_9",
-            10: "reserved_status_10", 11: "reserved_status_11",
-            12: "reserved_status_12", 13: "reserved_status_13",
-            14: "reserved_status_14", 15: "reserved_status_15"}),
+                                    2: "reserved_status_2", 3: "reserved_status_3",
+                                    4: "reserved_status_4", 5: "reserved_status_5",
+                                    6: "reserved_status_6", 7: "reserved_status_7",
+                                    8: "reserved_status_8", 9: "reserved_status_9",
+                                    10: "reserved_status_10", 11: "reserved_status_11",
+                                    12: "reserved_status_12", 13: "reserved_status_13",
+                                    14: "reserved_status_14", 15: "reserved_status_15"}),
         # Extended PAN identifier (8 octets)
-        dot15d4AddressField("pan_id_ext", 0, adjust=lambda pkt,x: 8),
+        dot15d4AddressField("pan_id_ext", 0, adjust=lambda pkt, x: 8),
         # Network update identifier (1 octet)
         ByteField("network_update_id", 0x00),
         # Logical channel (1 octet)
@@ -1205,13 +1253,14 @@ class ZLLNetworkStartResponse(Packet):
         XLEShortField("pan_id", 0x0000),
     ]
 
+
 class ZLLNetworkJoinRouterRequest(Packet):
     name = "ZLL: Network Join Router Request"
     fields_desc = [
         # Inter-PAN transaction identifier (4 octets)
         XLEIntField("inter_pan_transaction_id", 0x66666666),
         # Extended PAN identifier (8 octets)
-        dot15d4AddressField("pan_id_ext", 0, adjust=lambda pkt,x: 8),
+        dot15d4AddressField("pan_id_ext", 0, adjust=lambda pkt, x: 8),
         # Key index (1 octets)
         ByteField("key_index", 4),  # default: Master key
         # Encrypted network key (16 octets)
@@ -1238,6 +1287,7 @@ class ZLLNetworkJoinRouterRequest(Packet):
         XLEShortField("free_group_address_range_end", 0),
     ]
 
+
 class ZLLNetworkJoinRouterResponse(Packet):
     name = "ZLL: Network Join Router Response"
     fields_desc = [
@@ -1245,14 +1295,15 @@ class ZLLNetworkJoinRouterResponse(Packet):
         XLEIntField("inter_pan_transaction_id", 0x66666666),
         # Status (1 octet)
         ByteEnumField("status", 0, {0: "success", 1: "failure",
-            2: "reserved_status_2", 3: "reserved_status_3",
-            4: "reserved_status_4", 5: "reserved_status_5",
-            6: "reserved_status_6", 7: "reserved_status_7",
-            8: "reserved_status_8", 9: "reserved_status_9",
-            10: "reserved_status_10", 11: "reserved_status_11",
-            12: "reserved_status_12", 13: "reserved_status_13",
-            14: "reserved_status_14", 15: "reserved_status_15"}),
+                                    2: "reserved_status_2", 3: "reserved_status_3",
+                                    4: "reserved_status_4", 5: "reserved_status_5",
+                                    6: "reserved_status_6", 7: "reserved_status_7",
+                                    8: "reserved_status_8", 9: "reserved_status_9",
+                                    10: "reserved_status_10", 11: "reserved_status_11",
+                                    12: "reserved_status_12", 13: "reserved_status_13",
+                                    14: "reserved_status_14", 15: "reserved_status_15"}),
     ]
+
 
 class ZLLNetworkUpdateRequest(Packet):
     name = "ZLL: Network Update Request"
@@ -1260,7 +1311,7 @@ class ZLLNetworkUpdateRequest(Packet):
         # Inter-PAN transaction identifier (4 octets)
         XLEIntField("inter_pan_transaction_id", 0x66666666),
         # Extended PAN identifier (8 octets)
-        dot15d4AddressField("pan_id_ext", 0, adjust=lambda pkt,x: 8),
+        dot15d4AddressField("pan_id_ext", 0, adjust=lambda pkt, x: 8),
         # Network update identifier (1 octet)
         ByteField("network_update_id", 0x00),
         # Logical Channel (1 octet)
@@ -1272,112 +1323,113 @@ class ZLLNetworkUpdateRequest(Packet):
     ]
 ### ZigBee Cluster Library ###
 
+
 def util_zcl_attribute_value_len(pkt):
     # Calculate the length of the attribute value field
-    if ( pkt.attribute_data_type == 0x00 ): # no data
+    if (pkt.attribute_data_type == 0x00):  # no data
         return 0
-    elif ( pkt.attribute_data_type == 0x08 ): # 8-bit data
+    elif (pkt.attribute_data_type == 0x08):  # 8-bit data
         return 1
-    elif ( pkt.attribute_data_type == 0x09 ): # 16-bit data
+    elif (pkt.attribute_data_type == 0x09):  # 16-bit data
         return 2
-    elif ( pkt.attribute_data_type == 0x0a ): # 24-bit data
+    elif (pkt.attribute_data_type == 0x0a):  # 24-bit data
         return 3
-    elif ( pkt.attribute_data_type == 0x0b ): # 32-bit data
+    elif (pkt.attribute_data_type == 0x0b):  # 32-bit data
         return 4
-    elif ( pkt.attribute_data_type == 0x0c ): # 40-bit data
+    elif (pkt.attribute_data_type == 0x0c):  # 40-bit data
         return 5
-    elif ( pkt.attribute_data_type == 0x0d ): # 48-bit data
+    elif (pkt.attribute_data_type == 0x0d):  # 48-bit data
         return 6
-    elif ( pkt.attribute_data_type == 0x0e ): # 56-bit data
+    elif (pkt.attribute_data_type == 0x0e):  # 56-bit data
         return 7
-    elif ( pkt.attribute_data_type == 0x0f ): # 64-bit data
+    elif (pkt.attribute_data_type == 0x0f):  # 64-bit data
         return 8
-    elif ( pkt.attribute_data_type == 0x10 ): # boolean
+    elif (pkt.attribute_data_type == 0x10):  # boolean
         return 1
-    elif ( pkt.attribute_data_type == 0x18 ): # 8-bit bitmap
+    elif (pkt.attribute_data_type == 0x18):  # 8-bit bitmap
         return 1
-    elif ( pkt.attribute_data_type == 0x19 ): # 16-bit bitmap
+    elif (pkt.attribute_data_type == 0x19):  # 16-bit bitmap
         return 2
-    elif ( pkt.attribute_data_type == 0x1a ): # 24-bit bitmap
+    elif (pkt.attribute_data_type == 0x1a):  # 24-bit bitmap
         return 3
-    elif ( pkt.attribute_data_type == 0x1b ): # 32-bit bitmap
+    elif (pkt.attribute_data_type == 0x1b):  # 32-bit bitmap
         return 4
-    elif ( pkt.attribute_data_type == 0x1c ): # 40-bit bitmap
+    elif (pkt.attribute_data_type == 0x1c):  # 40-bit bitmap
         return 5
-    elif ( pkt.attribute_data_type == 0x1d ): # 48-bit bitmap
+    elif (pkt.attribute_data_type == 0x1d):  # 48-bit bitmap
         return 6
-    elif ( pkt.attribute_data_type == 0x1e ): # 46-bit bitmap
+    elif (pkt.attribute_data_type == 0x1e):  # 46-bit bitmap
         return 7
-    elif ( pkt.attribute_data_type == 0x1f ): # 64-bit bitmap
+    elif (pkt.attribute_data_type == 0x1f):  # 64-bit bitmap
         return 8
-    elif ( pkt.attribute_data_type == 0x20 ): # Unsigned 8-bit integer
+    elif (pkt.attribute_data_type == 0x20):  # Unsigned 8-bit integer
         return 1
-    elif ( pkt.attribute_data_type == 0x21 ): # Unsigned 16-bit integer
+    elif (pkt.attribute_data_type == 0x21):  # Unsigned 16-bit integer
         return 2
-    elif ( pkt.attribute_data_type == 0x22 ): # Unsigned 24-bit integer
+    elif (pkt.attribute_data_type == 0x22):  # Unsigned 24-bit integer
         return 3
-    elif ( pkt.attribute_data_type == 0x23 ): # Unsigned 32-bit integer
+    elif (pkt.attribute_data_type == 0x23):  # Unsigned 32-bit integer
         return 4
-    elif ( pkt.attribute_data_type == 0x24 ): # Unsigned 40-bit integer
+    elif (pkt.attribute_data_type == 0x24):  # Unsigned 40-bit integer
         return 5
-    elif ( pkt.attribute_data_type == 0x25 ): # Unsigned 48-bit integer
+    elif (pkt.attribute_data_type == 0x25):  # Unsigned 48-bit integer
         return 6
-    elif ( pkt.attribute_data_type == 0x26 ): # Unsigned 56-bit integer
+    elif (pkt.attribute_data_type == 0x26):  # Unsigned 56-bit integer
         return 7
-    elif ( pkt.attribute_data_type == 0x27 ): # Unsigned 64-bit integer
+    elif (pkt.attribute_data_type == 0x27):  # Unsigned 64-bit integer
         return 8
-    elif ( pkt.attribute_data_type == 0x28 ): # Signed 8-bit integer
+    elif (pkt.attribute_data_type == 0x28):  # Signed 8-bit integer
         return 1
-    elif ( pkt.attribute_data_type == 0x29 ): # Signed 16-bit integer
+    elif (pkt.attribute_data_type == 0x29):  # Signed 16-bit integer
         return 2
-    elif ( pkt.attribute_data_type == 0x2a ): # Signed 24-bit integer
+    elif (pkt.attribute_data_type == 0x2a):  # Signed 24-bit integer
         return 3
-    elif ( pkt.attribute_data_type == 0x2b ): # Signed 32-bit integer
+    elif (pkt.attribute_data_type == 0x2b):  # Signed 32-bit integer
         return 4
-    elif ( pkt.attribute_data_type == 0x2c ): # Signed 40-bit integer
+    elif (pkt.attribute_data_type == 0x2c):  # Signed 40-bit integer
         return 5
-    elif ( pkt.attribute_data_type == 0x2d ): # Signed 48-bit integer
+    elif (pkt.attribute_data_type == 0x2d):  # Signed 48-bit integer
         return 6
-    elif ( pkt.attribute_data_type == 0x2e ): # Signed 56-bit integer
+    elif (pkt.attribute_data_type == 0x2e):  # Signed 56-bit integer
         return 7
-    elif ( pkt.attribute_data_type == 0x2f ): # Signed 64-bit integer
+    elif (pkt.attribute_data_type == 0x2f):  # Signed 64-bit integer
         return 8
-    elif ( pkt.attribute_data_type == 0x30 ): # 8-bit enumeration
+    elif (pkt.attribute_data_type == 0x30):  # 8-bit enumeration
         return 1
-    elif ( pkt.attribute_data_type == 0x31 ): # 16-bit enumeration
+    elif (pkt.attribute_data_type == 0x31):  # 16-bit enumeration
         return 2
-    elif ( pkt.attribute_data_type == 0x38 ): # Semi-precision
+    elif (pkt.attribute_data_type == 0x38):  # Semi-precision
         return 2
-    elif ( pkt.attribute_data_type == 0x39 ): # Single precision
+    elif (pkt.attribute_data_type == 0x39):  # Single precision
         return 4
-    elif ( pkt.attribute_data_type == 0x3a ): # Double precision
+    elif (pkt.attribute_data_type == 0x3a):  # Double precision
         return 8
-    elif ( pkt.attribute_data_type == 0x41 ): # Octet string
-        return int(pkt.attribute_value[0]) # defined in first octet
-    elif ( pkt.attribute_data_type == 0x42 ): # Character string
-        return int(pkt.attribute_value[0]) # defined in first octet
-    elif ( pkt.attribute_data_type == 0x43 ): # Long octet string
-        return int(pkt.attribute_value[0:2]) # defined in first two octets
-    elif ( pkt.attribute_data_type == 0x44 ): # Long character string
-        return int(pkt.attribute_value[0:2]) # defined in first two octets
+    elif (pkt.attribute_data_type == 0x41):  # Octet string
+        return int(pkt.attribute_value[0])  # defined in first octet
+    elif (pkt.attribute_data_type == 0x42):  # Character string
+        return int(pkt.attribute_value[0])  # defined in first octet
+    elif (pkt.attribute_data_type == 0x43):  # Long octet string
+        return int(pkt.attribute_value[0:2])  # defined in first two octets
+    elif (pkt.attribute_data_type == 0x44):  # Long character string
+        return int(pkt.attribute_value[0:2])  # defined in first two octets
     # TODO implement Ordered sequence & collection
-    elif ( pkt.attribute_data_type == 0xe0 ): # Time of day
+    elif (pkt.attribute_data_type == 0xe0):  # Time of day
         return 4
-    elif ( pkt.attribute_data_type == 0xe1 ): # Date
+    elif (pkt.attribute_data_type == 0xe1):  # Date
         return 4
-    elif ( pkt.attribute_data_type == 0xe2 ): # UTCTime
+    elif (pkt.attribute_data_type == 0xe2):  # UTCTime
         return 4
-    elif ( pkt.attribute_data_type == 0xe8 ): # Cluster ID
+    elif (pkt.attribute_data_type == 0xe8):  # Cluster ID
         return 2
-    elif ( pkt.attribute_data_type == 0xe9 ): # Attribute ID
+    elif (pkt.attribute_data_type == 0xe9):  # Attribute ID
         return 2
-    elif ( pkt.attribute_data_type == 0xea ): # BACnet OID
+    elif (pkt.attribute_data_type == 0xea):  # BACnet OID
         return 4
-    elif ( pkt.attribute_data_type == 0xf0 ): # IEEE address
+    elif (pkt.attribute_data_type == 0xf0):  # IEEE address
         return 8
-    elif ( pkt.attribute_data_type == 0xf1 ): # 128-bit security key
+    elif (pkt.attribute_data_type == 0xf1):  # 128-bit security key
         return 16
-    elif ( pkt.attribute_data_type == 0xff ): # Unknown
+    elif (pkt.attribute_data_type == 0xff):  # Unknown
         return 0
     else:
         return 0
@@ -1397,93 +1449,10 @@ class ZCLReadAttributeStatusRecord(Packet):
         ),
         # Attribute data (0/variable in size), only included if status == 0x00 (SUCCESS)
         ConditionalField(
-            StrLenField("attribute_value", "", length_from=lambda pkt:util_zcl_attribute_value_len(pkt) ),
+            StrLenField("attribute_value", "",
+                        length_from=lambda pkt:util_zcl_attribute_value_len(pkt)),
             lambda pkt:pkt.status == 0x00
         ),
-    ]
-
-class ZCLGeneralReadAttributes(Packet):
-    name = "General Domain: Command Frame Payload: read_attributes"
-    fields_desc = [
-        FieldListField("attribute_identifiers", [], XLEShortField("", 0x0000) ),
-    ]
-
-class ZCLGeneralReadAttributesResponse(Packet):
-    name = "General Domain: Command Frame Payload: read_attributes_response"
-    fields_desc = [
-        PacketListField("read_attribute_status_record", [], ZCLReadAttributeStatusRecord),
-    ]
-
-class ZCLMeteringGetProfile(Packet):
-    name = "Metering Cluster: Get Profile Command (Server: Received)"
-    fields_desc = [
-        # Interval Channel (8-bit Enumeration): 1 octet
-        ByteField("Interval_Channel", 0), # 0 == Consumption Delivered ; 1 == Consumption Received
-        # End Time (UTCTime): 4 octets
-        XLEIntField("End_Time", 0x00000000),
-        # NumberOfPeriods (Unsigned 8-bit Integer): 1 octet
-        ByteField("NumberOfPeriods", 1), # Represents the number of intervals being requested.
-    ]
-
-class ZCLPriceGetCurrentPrice(Packet):
-    name = "Price Cluster: Get Current Price Command (Server: Received)"
-    fields_desc = [
-        BitField("reserved", 0, 7),
-        BitField("Requestor_Rx_On_When_Idle", 0, 1),
-    ]
-
-class ZCLPriceGetScheduledPrices(Packet):
-    name = "Price Cluster: Get Scheduled Prices Command (Server: Received)"
-    fields_desc = [
-        XLEIntField("start_time", 0x00000000), # UTCTime (4 octets)
-        ByteField("number_of_events", 0), # Number of Events (1 octet)
-    ]
-
-class ZCLPricePublishPrice(Packet):
-    name = "Price Cluster: Publish Price Command (Server: Generated)"
-    fields_desc = [
-        XLEIntField("provider_id", 0x00000000), # Unsigned 32-bit Integer (4 octets)
-        # Rate Label is a UTF-8 encoded Octet String (0-12 octets). The first Octet indicates the length.
-        StrLenField("rate_label", "", length_from=lambda pkt:int(pkt.rate_label[0]) ), # TODO verify
-        XLEIntField("issuer_event_id", 0x00000000), # Unsigned 32-bit Integer (4 octets)
-        XLEIntField("current_time", 0x00000000), # UTCTime (4 octets)
-        ByteField("unit_of_measure", 0), # 8 bits enumeration (1 octet)
-        XLEShortField("currency", 0x0000), # Unsigned 16-bit Integer (2 octets)
-        ByteField("price_trailing_digit", 0), # 8-bit BitMap (1 octet)
-        ByteField("number_of_price_tiers", 0), # 8-bit BitMap (1 octet)
-        XLEIntField("start_time", 0x00000000), # UTCTime (4 octets)
-        XLEShortField("duration_in_minutes", 0x0000), # Unsigned 16-bit Integer (2 octets)
-        XLEIntField("price", 0x00000000), # Unsigned 32-bit Integer (4 octets)
-        ByteField("price_ratio", 0), # Unsigned 8-bit Integer (1 octet)
-        XLEIntField("generation_price", 0x00000000), # Unsigned 32-bit Integer (4 octets)
-        ByteField("generation_price_ratio", 0), # Unsigned 8-bit Integer (1 octet)
-        XLEIntField("alternate_cost_delivered", 0x00000000), # Unsigned 32-bit Integer (4 octets)
-        ByteField("alternate_cost_unit", 0), # 8-bit enumeration (1 octet)
-        ByteField("alternate_cost_trailing_digit", 0), # 8-bit BitMap (1 octet)
-        ByteField("number_of_block_thresholds", 0), # 8-bit BitMap (1 octet)
-        ByteField("price_control", 0), # 8-bit BitMap (1 octet)
-    ]
-
-class ZigbeeClusterLibrary(Packet):
-    name = "Zigbee Cluster Library (ZCL) Frame"
-    fields_desc = [
-        # Frame control (8 bits)
-        BitField("reserved", 0, 3),
-        BitField("disable_default_response", 0, 1), # 0 default response command will be returned
-        BitEnumField("direction", 0, 1, ['client2server', 'server2client']),
-        BitField("manufacturer_specific", 0, 1), # 0 manufacturer code shall not be included in the ZCL frame
-        # Frame Type
-        # 0b00 command acts across the entire profile
-        # 0b01 command is specific to a cluster
-        # 0b10 - 0b11 reserved
-        BitField("zcl_frametype", 0, 2),
-        # Manufacturer code (0/16 bits) only present then manufacturer_specific field is set to 1
-        ConditionalField(XLEShortField("manufacturer_code", 0x0),
-            lambda pkt:pkt.getfieldval("manufacturer_specific") == 1
-        ),
-        ByteField("transaction_sequence", 0),
-        # Command identifier (8 bits): the cluster command
-        ByteEnumField("command_identifier", 0, _zcl_command_frames),
     ]
 
     def guess_payload_class(self, payload):
@@ -1502,40 +1471,41 @@ class ZigbeeClusterLibrary(Packet):
         else:
             return Packet.guess_payload_class(self, payload)
 
-bind_layers( ZigbeeAppDataPayloadStub, ZigbeeZLLCommissioningCluster,
-        profile=0xc05e, cluster=0x1000)
-bind_layers( ZigbeeZLLCommissioningCluster, ZLLScanRequest,
-        command_identifier=0x00, direction=0)
-bind_layers( ZigbeeZLLCommissioningCluster, ZLLScanResponse,
-        command_identifier=0x01, direction=1)
-bind_layers( ZigbeeZLLCommissioningCluster, ZLLDeviceInformationRequest,
-        command_identifier=0x03, direction=0)
-bind_layers( ZigbeeZLLCommissioningCluster, ZLLIdentifyRequest,
-        command_identifier=0x06, direction=0)
-bind_layers( ZigbeeZLLCommissioningCluster, ZLLResetToFactoryNewRequest,
-        command_identifier=0x07, direction=0)
-bind_layers( ZigbeeZLLCommissioningCluster, ZLLNetworkStartRequest,
-        command_identifier=0x10, direction=0)
-bind_layers( ZigbeeZLLCommissioningCluster, ZLLNetworkStartResponse,
-        command_identifier=0x11, direction=1)
-bind_layers( ZigbeeZLLCommissioningCluster, ZLLNetworkJoinRouterRequest,
-        command_identifier=0x12, direction=0)
-bind_layers( ZigbeeZLLCommissioningCluster, ZLLNetworkJoinRouterResponse,
-        command_identifier=0x13, direction=1)
-bind_layers( ZigbeeZLLCommissioningCluster, ZLLNetworkUpdateRequest,
-        command_identifier=0x16, direction=0)
 
-
+# ZLL (Touchlink):
+bind_layers(ZigbeeAppDataPayloadStub, ZigbeeZLLCommissioningCluster,
+            profile=0xc05e, cluster=0x1000)
+bind_layers(ZigbeeZLLCommissioningCluster, ZLLScanRequest,
+            command_identifier=0x00, direction=0)
+bind_layers(ZigbeeZLLCommissioningCluster, ZLLScanResponse,
+            command_identifier=0x01, direction=1)
+bind_layers(ZigbeeZLLCommissioningCluster, ZLLDeviceInformationRequest,
+            command_identifier=0x03, direction=0)
+bind_layers(ZigbeeZLLCommissioningCluster, ZLLIdentifyRequest,
+            command_identifier=0x06, direction=0)
+bind_layers(ZigbeeZLLCommissioningCluster, ZLLResetToFactoryNewRequest,
+            command_identifier=0x07, direction=0)
+bind_layers(ZigbeeZLLCommissioningCluster, ZLLNetworkStartRequest,
+            command_identifier=0x10, direction=0)
+bind_layers(ZigbeeZLLCommissioningCluster, ZLLNetworkStartResponse,
+            command_identifier=0x11, direction=1)
+bind_layers(ZigbeeZLLCommissioningCluster, ZLLNetworkJoinRouterRequest,
+            command_identifier=0x12, direction=0)
+bind_layers(ZigbeeZLLCommissioningCluster, ZLLNetworkJoinRouterResponse,
+            command_identifier=0x13, direction=1)
+bind_layers(ZigbeeZLLCommissioningCluster, ZLLNetworkUpdateRequest,
+            command_identifier=0x16, direction=0)
 
 
 # Bindings #
 
-# TODO: find a way to chose between ZigbeeNWK and SixLoWPAN (cf. sixlowpan.py)
+# TODO: find a way to choose between ZigbeeNWK and SixLoWPAN (cf. sixlowpan.py)
 # Currently: use conf.dot15d4_protocol value
-# bind_layers( Dot15d4Data, ZigbeeNWK)
-
-bind_layers(ZigbeeAppDataPayload, ZigbeeAppCommandPayload, frametype=1)
+bind_layers(Dot15d4Data, ZigbeeNWK)
 bind_layers(Dot15d4Beacon, ZigBeeBeacon)
+
+# bind_layers(ZigbeeAppDataPayload, ZigbeeAppCommandPayload, frametype=1)
+
 
 bind_bottom_up(UDP, ZEP2, sport=17754)
 bind_bottom_up(UDP, ZEP2, sport=17754)
