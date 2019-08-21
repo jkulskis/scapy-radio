@@ -1434,27 +1434,6 @@ def util_zcl_attribute_value_len(pkt):
     else:
         return 0
 
-
-class ZCLReadAttributeStatusRecord(Packet):
-    name = "ZCL Read Attribute Status Record"
-    fields_desc = [
-        # Attribute Identifier
-        XLEShortField("attribute_identifier", 0),
-        # Status
-        ByteEnumField("status", 0, _zcl_enumerated_status_values),
-        # Attribute data type (0/1 octet), only included if status == 0x00 (SUCCESS)
-        ConditionalField(
-            ByteEnumField("attribute_data_type", 0, _zcl_attribute_data_types),
-            lambda pkt:pkt.status == 0x00
-        ),
-        # Attribute data (0/variable in size), only included if status == 0x00 (SUCCESS)
-        ConditionalField(
-            StrLenField("attribute_value", "",
-                        length_from=lambda pkt:util_zcl_attribute_value_len(pkt)),
-            lambda pkt:pkt.status == 0x00
-        ),
-    ]
-
     def guess_payload_class(self, payload):
         if isinstance(self.underlayer, ZigbeeAppDataPayload):
             # General Cluster ID Range 0x0000 - 0x00FF

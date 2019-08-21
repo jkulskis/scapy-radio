@@ -14,7 +14,7 @@ from scapy.packet import *
 from scapy.fields import *
 from scapy.supersocket import SuperSocket
 from scapy import sendrecv
-from scapy import main  
+from scapy import main
 from appdirs import user_data_dir
 import socket
 import struct
@@ -25,117 +25,14 @@ import sys
 import subprocess
 import time
 import datetime
-
-
-class Radio:
-
-    FULL_DUPLEX = ['usrp', 'pluto']
-
-    def __init__(self, hardware=None, detect=True, env=None):
-        # usrp, hackrf, etc.
-        self.env = env
-        # full_duplex detected in self.detect_hardware if no hardware is given
-        self.full_duplex = hardware in self.FULL_DUPLEX if hardware else None
-        self.hardware = hardware.lower() if hardware else None
-        if detect:
-            self.detect_hardware()
-        self.protocols = {}
-        self.update_protocols()
-
-    def update_protocols(self):
-        try:
-            for protocol, hardwares in conf.gr_modulations.items():
-                if self.hardware in hardwares.keys():
-                    self.protocols[protocol] = conf.gr_modulations[protocol][self.hardware]
-        except AttributeError:  # conf.gr_modulations hasn't been loaded up yet
-            initial_setup()
-            self.update_protocols()
-
-    def protocol_modes(self, protocol):
-        protocol = protocol.lower()
-        self.update_protocols()
-        return list(self.protocols[protocol].keys())
-
-    def detect_hardware(self):
-        hardware_checks = [
-            ('usrp', 'uhd_find_devices'),
-            ('hackrf', 'hackrf_info')
-        ]
-        if self.hardware:  # if using a specific hardware, only try to detect the given hardware type
-            supported = False
-            for hardware_info in hardware_checks:
-                if hardware_info[0] == self.hardware:
-                    hardware_checks = [hardware_info]
-                    supported = True
-                    break
-            if not supported:
-                print("Could not find supported hardware\n")
-                self.hardware = None
-                return self.hardware
-        print("\nTrying to find supported hardware: {}".format(
-            ', '.join(hardware_info[0] for hardware_info in hardware_checks)))
-        for hardware_info in hardware_checks:
-            try:  # try to find a usrp first, since full duplex is optimal for testing
-                find_process = subprocess.check_call(
-                    hardware_info[1], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, env=self.env)
-                if find_process == 0:
-                    print("Using hardware: {}".format(hardware_info[0]))
-                    self.hardware = hardware_info[0]
-                    self.full_duplex = self.hardware in self.FULL_DUPLEX
-                    return self.hardware
-            except (FileNotFoundError, subprocess.CalledProcessError):
-                # if they don't have this hardware's drivers (FileNotFoundError) or one is not plugged in (returns exit code 1), just move on and try for the next hardware
-                pass
-        print("Could not find supported hardware")
-        self.hardware = None
-        return self.hardware
-
-    def wait_for_hardware(self):
-        if self.hardware == "usrp":
-            # need to change to usrp specific string since press enter to quit takes time to load up
-            load_strings = ["Actually got clock rate"] * 2
-            busy_string = "KeyError: No devices found for"
-            sleep_time = 1.5
-        elif self.hardware == "hackrf":
-            load_strings = ["Using HackRF"]
-            busy_string = "Resource busy"
-            sleep_time = 0.5
-        else:
-            time.sleep(10)  # unrecognized hardware...sleep for 10s to load up
-            return 0
-        print("\nWaiting for {}...".format(self.hardware))
-        while True:
-            # don't read constantly to avoid creating a heavy process
-            time.sleep(0.2)
-            conf.gr_process_io["stderr"].seek(0)
-            out = conf.gr_process_io["stderr"].read()
-            if out:
-                for ii in range(len(load_strings)):
-                    if load_strings[ii] in out:
-                        if ii == len(load_strings) - 1:
-                            # wait the extra sleep time, since there is a small delay
-                            time.sleep(sleep_time)
-                            print("Loaded up {}".format(self.hardware))
-                            return True
-                        else:
-                            out = out[out.index(
-                                load_strings[ii]) + len(load_strings[ii]):]
-                    else:
-                        break
-                if busy_string in out:
-                    print("{} is Busy".format(self.hardware))
-                    return False
-            if conf.gr_process.poll():  # check if the process exited before the hardware loaded up
-                print("Error: Process exited before {} loaded up\n".format(
-                    self.hardware))
-                print("Gnuradio-err log:\n\n{0}".format(out))
-                return False
-        return True  # all the load strings were loaded up
+import errno
 
 
 def find_all_hardware(env=None):
-    hardware_checks = [('usrp', 'uhd_find_devices'),
-                       ('hackrf', 'hackrf_info')]
+    hardware_checks = [
+        ('usrp', 'uhd_find_devices'),
+        ('hackrf', 'hackrf_info')
+    ]
     available_hardware = []
     for hardware_info in hardware_checks:
         try:  # try to find a usrp first, since full duplex is optimal for testing
@@ -170,7 +67,7 @@ class GnuradioSocket(SuperSocket):
     def recv(self, x=MTU):
         data, addr = self.ins.recvfrom(x)
         p = scapy.layers.gnuradio.GnuradioPacket(data)
-        # check if a valid gnuradio protocol, otherwise return the raw data
+        # check if a valid gnuradio protocol, otherwise return a raw Packet
         if p.fields['proto'] not in range(1, 6):
             return Packet(data)
         return p
@@ -191,18 +88,18 @@ def parse_parameters(**kwargs):
     for arg, v in kwargs.items():
         if v is not None:
             if len(arg) == 1:  # using short ID
-                paramter_args.append("-{}".format(arg.replace("_", "-")))
+                paramter_args.append("-" + arg.replace("_", "-"))
             else:  # if len(arg) > 1, then using the full ID
-                paramter_args.append("--{}".format(arg.replace("_", "-")))
+                paramter_args.append("--" + arg.replace("_", "-"))
             paramter_args.append(str(v))
     return paramter_args
 
 
 def get_parameter(short_id=None, long_id=None, params=[]):
-    if short_id and "-{}".format(short_id) in params:
-        return params[params.index("-{}".format(short_id)) + 1]
-    elif long_id and "--{}".format(long_id) in params:
-        return params[params.index("--{}".format(long_id)) + 1]
+    if short_id and "-" + short_id in params:
+        return params[params.index("-" + short_id) + 1]
+    elif long_id and "--" + long_id in params:
+        return params[params.index("--" + long_id) + 1]
     else:
         return None
 
@@ -246,159 +143,32 @@ def available_actions(protocol):
     return actions
 
 
-def wait_for_hardware(hardware):
-    if hardware == "usrp":
-        # need to change to usrp specific string since press enter to quit takes time to load up
-        load_string = "Actually got clock rate 32.000000 MHz"
-        busy_string = "KeyError: No devices found for"
-        sleep_time = 1.5
-    elif hardware == "hackrf":
-        load_string = "Using HackRF"
-        busy_string = "Resource busy"
-        sleep_time = 0.5
-    while True:
-        # don't read constantly to avoid creating a heavy process
-        time.sleep(0.1)
-        conf.gr_process_io["stderr"].seek(0)
-        out = conf.gr_process_io["stderr"].read()
-        if out:
-            if load_string in out:
-                # wait an extra half second, since there is a small delay
-                time.sleep(sleep_time)
-                return 0
-            elif busy_string in out:
-                return 1
-
-
 @conf.commands.register
-def srradio(
-    pkts,
-    channels=None,
-    protocol=None,
-    radio=None,
-    listen=True,
-    wait_times=0.25,
-    env=None,
-    preamble_fuzz=False,
-    params={},
-    prn=None,
-    *args,
-    **kwargs
-):
+def srradio(pkts, inter=0.1, *args, **kargs):
     """send and receive using a Gnuradio socket"""
-    rx_packets = {ch: [] for ch in channels}
-    if preamble_fuzz:
-        mode = switch_radio_protocol(protocol.lower(), radio=radio, env=env, modes=[
-            "rf_fuzz", "tx_fuzz"]
-        )
-        if mode is None:
-            return rx_packets
-    else:
-        mode = switch_radio_protocol(protocol.lower(), radio=radio, env=env, modes=[
-            "rf", "tx"]
-        )
-        if mode is None:
-            return rx_packets
     s = GnuradioSocket()
-    gnuradio_set_vars(**params)
-    pkt_strings = [str(pkt) for pkt in strip_gnuradio_layer(pkts)]
-    for ch in channels:
-        gnuradio_set_vars(channel=ch)
-        ch_start_time = time.time()
-        print("\nSending on channel {}".format(ch))
-        number = 0
-        if not isinstance(wait_times, list):  # either list, numeral, or None
-            wait_times = [wait_times] * len(pkts)
-        for ii in range(len(pkts)):
-            number += 1
-            s.send(pkts[ii])
-            if prn:
-                prn(pkts[ii], number=number, channel=ch, tx=True)
-            if wait_times[ii]:
-                print("Waiting {} seconds...".format(wait_times[ii]))
-                if radio.full_duplex:
-                    rv = sendrecv.sniff(
-                        opened_socket=s,
-                        timeout=wait_times[ii]
-                    )
-                    for r_pkt in rv:
-                        if (
-                            r_pkt is not None
-                            and str(strip_gnuradio_layer(r_pkt)) != pkt_strings[ii]
-                        ):
-                            if prn:
-                                prn(r_pkt, channel=ch)
-                            rx_packets[ch].append(r_pkt)
-                else:
-                    time.sleep(wait_times[ii])
-    print(
-        "Total Time for Channel {}: {}".format(
-            ch,
-            datetime.timedelta(seconds=round(
-                (time.time() - ch_start_time), 4)
-            ),
-        )
-    )
-    if radio.full_duplex:
-        print("Emptying socket of any responses...")
-        rv = sendrecv.sniff(
-            opened_socket=s, timeout=2
-        )  # wait 3 seconds to empty the socket
-        for r_pkt in rv:
-            if (
-                r_pkt is not None
-                and str(strip_gnuradio_layer(r_pkt)) not in pkt_strings
-            ):
-                rx_packets[ch].append(r_pkt)
-    else:
-        print("Closing socket...")
+    a, b = sendrecv.sndrcv(s, pkts, inter=inter, *args, **kargs)
     s.close()
-    kill_process()
-    return rx_packets
+    return a, b
 
 
 @conf.commands.register
-def sniffradio(
-    channels=None,
-    protocol=None,
-    radio=None,
-    env=None,
-    opened_socket=None,
-    offline_file=None,
-    params={},
-    *args,
-    **kwargs
-):
-    rx_packets = {ch: [] for ch in channels}
-    if not switch_radio_protocol(
-        protocol.lower(),
-        radio=radio,
-        env=env,
-        modes="rx",
-        wait=True,
-    ):
-        return rx_packets
+def sniffradio(opened_socket=None, radio=None, *args, **kargs):
+    if radio is not None:
+        switch_radio_protocol(radio)
     s = opened_socket if opened_socket is not None else GnuradioSocket()
-    gnuradio_set_vars(**params)
-    for ch in channels:
-        print("\nSniffing on channel {}".format(ch))
-        gnuradio_set_vars(channel=ch)
-        # while 1:
-        #     if offline_file:
-        #         if os.path.exists(offline_file):
-        #             with open(offline_file, 'rb') as f:
-        #                 if f.read():
-        #                     break
-        rv = sendrecv.sniff(
-            opened_socket=s,
-            offline=None,  # offline_file,
-            *args,
-            **kwargs
-        )
-    if opened_socket is not None:
+    rv = sendrecv.sniff(opened_socket=s, *args, **kargs)
+    if opened_socket is None:
         s.close()
-    kill_process()
     return rv
+
+
+def disable_print():
+    sys.stdout = open(os.devnull, 'w')
+
+
+def enable_print():
+    sys.stdout = sys.__stdout__
 
 
 @conf.commands.register
@@ -415,6 +185,7 @@ def kill_process():
                 v.close()
                 v = None
         conf.gr_process.kill()
+    conf.gr_process = None
 
 
 def build_protocol_mode(protocol=None, mode_path=None, hardware=None, env=None):
@@ -439,15 +210,14 @@ def build_protocol_mode(protocol=None, mode_path=None, hardware=None, env=None):
             # assume that there is only one grc file in the mode_path dir
             grc_file_name = file_name
     if grc_file_name is None and compiled_file_name is None:  # invalid path if no .py file or .grc file
-        print('"{}" is an invalid protocol mode_path...no .grc or .py file found'.format(
-            mode_path))
+        print(
+            f"'{mode_path}' is an invalid protocol mode_path...no .grc or .py file found")
         return 1
     elif compiled_file_name is None:  # check if the grc has been compiled
         try:
-            print("Compiling {0} for {1}".format(
-                base_dir_name, hardware))
+            print(f"Compiling {base_dir_name} for {hardware}")
             # try to compile the grc file
-            outdir = "--directory={}".format(mode_path)
+            outdir = "--directory=" + mode_path
             grc_file_path = os.path.join(mode_path, grc_file_name)
             subprocess.check_call(
                 [
@@ -470,8 +240,7 @@ def build_protocol_mode(protocol=None, mode_path=None, hardware=None, env=None):
                 mode_path, compiled_file_name
             )
         except:  # if compiling the grc failed, then set this protocol mode to None
-            print("Compilation of {0} for {1} failed".format(
-                base_dir_name, hardware))
+            print(f"Compilation of {base_dir_name} for {hardware} failed")
             conf.gr_modulations[protocol][hardware][mode] = None
     else:
         conf.gr_modulations[protocol][hardware][mode] = os.path.join(
@@ -552,19 +321,64 @@ def sigint_ignore():
 
 @conf.commands.register
 def gnuradio_set_vars(gr_host="localhost", gr_port=8080, **kwargs):
+    if not kwargs:
+        return
     try:
         from xmlrpc.client import Server
         from xmlrpc.client import Fault
     except ImportError:
         print("xmlrpc is needed to call 'gnuradio_set_vars'")
     else:
-        s = Server("http://{}:{}".format(gr_host, gr_port))
+        s = Server(f"http://{gr_host}:{gr_port}")
         for k, v in kwargs.items():
             try:
-                getattr(s, "set_{}".format(k))(v)
+                getattr(s, f"set_{k}")(v)
             except Fault:
-                print("Unknown variable '{}'".format(k))
+                print(f"Unknown variable '{k}'")
         s = None
+
+
+@conf.commands.register
+def wait_for_radio(gr_host="localhost", gr_port=8080, timeout=20):
+    try:
+        from xmlrpc.client import Server
+        from xmlrpc.client import Fault
+    except ImportError:
+        print("xmlrpc is needed to use 'wait_for_radio'")
+        print("Waiting for 10s statically instead...")
+        time.sleep(10)
+    print("Waiting 20s for the SDR to start up", end='')
+    start_time = time.time()
+    while 1:
+        try:
+            disable_print()
+            # try to connect to the XMLRPC server in the flowgraph
+            gnuradio_get_vars('startup_var')
+            enable_print()
+            print("")
+            break
+        except socket.error as e:
+            enable_print()
+            if e.errno is errno.ECONNREFUSED:
+                if time.time() - start_time > timeout:
+                    print(f"Could not connect to the SDR within {timeout} seconds. Exiting...")
+                    sys.exit(1)
+                print('.', end='')
+                sys.stdout.flush()
+                time.sleep(.5)
+                continue
+            elif e.errno is errno.ECONNRESET:
+                print("\nSDR not connected. Exiting...")
+                sys.exit(1)
+            else:
+                enable_print()
+                raise(e)
+        except KeyError: # may not have a varaible called "startup_var" in the flowgraph, but that's fine 
+            pass
+        enable_print()
+        time.sleep(0.5) # wait an extra 0.5 seconds so that everything is up and running
+        print("")
+        break
 
 
 @conf.commands.register
@@ -580,14 +394,13 @@ def gnuradio_get_vars(*args, **kwargs):
     except ImportError:
         print("xmlrpc is needed to call 'gnuradio_get_vars'")
     else:
-        s = Server(
-            "http://{}:{}".format(kwargs["gr_host"], kwargs["gr_port"]))
+        s = Server(f"http://{kwargs['gr_host']}:{kwargs['gr_port']}")
         for v in args:
             try:
-                res = getattr(s, "get_{}".format(v))()
+                res = getattr(s, f"get_{v}")()
                 rv[v] = res
             except Fault:
-                print("Unknown variable '{}'".format(v))
+                print(f"Unknown variable '{v}'")
         s = None
     if len(args) == 1:
         return rv[args[0]]
@@ -602,7 +415,7 @@ def gnuradio_stop_graph(gr_host="localhost", gr_port=8080):
     except ImportError:
         print("xmlrpc is needed to call 'gnuradio_stop_graph'")
     else:
-        s = Server("http://{host}:{port}".format(host=gr_host, port=gr_port))
+        s = Server(f"http://{gr_host}:{gr_port}")
         s.stop()
         s.wait()
 
@@ -615,24 +428,25 @@ def gnuradio_start_graph(gr_host="localhost", gr_port=8080):
     except ImportError:
         print("xmlrpclib is needed to call 'gnuradio_start_graph'")
     else:
-        s = Server("http://{host}:{port}".format(host=gr_host, port=gr_port))
+        s = Server(f"http://{gr_host}:{gr_port}")
         try:
             s.start()
         except Fault as e:
-            print("ERROR: {}".format(e.faultString))
+            print(f"ERROR: {e.faultString}")
 
 
 @conf.commands.register
 def switch_radio_protocol(
     protocol,
-    radio=None,
     modes=None,
     params=[],
     env=None,
-    wait=True,
+    hardware=None,
     *args,
     **kwargs,
 ):
+    if conf.gr_process is not None:
+        return True  # don't switch if something is already running
     protocol = protocol.lower()
     if isinstance(modes, str):
         modes = [modes.lower()]
@@ -656,28 +470,29 @@ def switch_radio_protocol(
         except ValueError:
             available_protocols = []
             for protocol, hardwares in conf.gr_modulations.items():
-                if radio.hardware in hardwares.keys():
+                if hardware in hardwares.keys():
                     available_protocols.append(protocol)
             print(
-                "Invalid protocol\nAvailable protocols for {}: {}\n".format(radio.hardware, ", ".join(
-                    available_protocols))
+                "Invalid protocol\nAvailable protocols for {}: {}\n".format(
+                    hardware, ", ".join(available_protocols)
+                )
             )
-            raise AttributeError("Unknown radio protocol: {}".format(protocol))
+            raise AttributeError(f"Unknown radio protocol: {protocol}")
     if conf.gr_process is not None:
         # An instance is already running
         kill_process()
         conf.gr_process = None
     for mode in modes:
         try:
-            if conf.gr_modulations[protocol][radio.hardware][mode].endswith('.py'):
+            if conf.gr_modulations[protocol][hardware][mode].endswith('.py'):
                 full_cmd = ["python2", conf.gr_modulations[protocol]
-                            [radio.hardware][mode]] + params
-            elif conf.gr_modulations[protocol][radio.hardware][mode].endswith('.sh'):
+                            [hardware][mode]] + params
+            elif conf.gr_modulations[protocol][hardware][mode].endswith('.sh'):
                 full_cmd = ["./" + conf.gr_modulations[protocol]
-                            [radio.hardware][mode]] + params
+                            [hardware][mode]] + params
             else:
                 full_cmd = [conf.gr_modulations[protocol]
-                            [radio.hardware][mode]] + params
+                            [hardware][mode]] + params
             conf.gr_process = subprocess.Popen(
                 full_cmd,
                 env=env,
@@ -686,18 +501,8 @@ def switch_radio_protocol(
                 stderr=conf.gr_process_io["stderr"],
                 stdin=subprocess.PIPE,
             )
-            if wait:
-                if conf.gr_modulations[protocol][radio.hardware][mode].endswith('.py'):
-                    # assume that a python file is a gnuradio compiled block file
-                    return radio.wait_for_hardware()
-                else:
-                    # for any other files, just wait 3 seconds to assume that the hardware is loaded up
-                    # may change this in the future by adding custom wait strings for std-err / std-out
-                    time.sleep(3)
-                    return True
-            else:
-                print('Connected to {}'.format(radio.hardware))
-                return True
+            wait_for_radio()
+            return True
         except OSError:
             return False
         except KeyError:  # mode doesn't exist for this hardware
